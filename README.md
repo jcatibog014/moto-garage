@@ -8,8 +8,9 @@ A web app for a buy-and-sell business that tracks every motorcycle and car: what
 - **Add / edit unit**: one form for all details, including photos (when adding) and papers, with a **Save** button pinned to the bottom of the screen. Leaving with unsaved changes asks first.
 - **Reports**: profit by month (chart and table), average margin and days to sell, profit by type and by brand, the most and least profitable units, and where expenses go. You can view the last 12 months, a single year, or all time.
 
-Photos are shrunk in the browser (about 100–200 KB each) and saved in Firestore, because file storage needs the paid Blaze plan.
 - Amounts are in Philippine Pesos (₱). Works on phones and computers.
+
+Photos are shrunk in the browser (about 100–200 KB each) and saved in Firestore, because file storage needs the paid Blaze plan.
 
 Data is stored in **Firebase Firestore** on the free Spark plan (no credit card). Only team members listed in `firestore.rules` can log in and see the data.
 
