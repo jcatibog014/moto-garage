@@ -315,6 +315,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .checklist li + li { border-top: 1px solid var(--line); }
 .checklist label { display: flex; align-items: center; gap: 12px; padding: 10px 0; cursor: pointer; }
 .checklist input { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; accent-color: var(--pos); }
+.papers-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.unsaved { color: var(--warn); font-weight: 600; font-size: 0.88rem; }
 .orcr-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 0 10px; }
 .orcr-label { font-weight: 600; }
 .choice { display: inline-flex; gap: 2px; padding: 3px; background: var(--bg); border-radius: var(--radius-sm); }

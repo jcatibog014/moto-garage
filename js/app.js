@@ -314,7 +314,8 @@
       return batch.commit();
     },
     setCover: (unitId, photo) => fb.updateDoc(unitRef(unitId), { thumb: photo.thumb, cover_id: photo.id }),
-    setPaper: (unitId, key, done) => fb.updateDoc(unitRef(unitId), { ['papers.' + key]: done }),
+    setPapers: (unitId, values) => fb.updateDoc(unitRef(unitId),
+      Object.fromEntries(Object.entries(values).map(([key, v]) => ['papers.' + key, v]))),
   };
 
   // Shrinks and saves photos one by one. `hasCover` says whether the unit already has a cover.
@@ -710,9 +711,20 @@
       <div data-pane="reserve" hidden>${reserveFormHtml()}</div>`;
   }
 
+  // The saved papers of a unit, in the shape the checklist edits.
+  const savedPapers = (u) => ({
+    orcr: ORCR[u.papers && u.papers.orcr] ? u.papers.orcr : null,
+    deed: hasPaper(u, 'deed'),
+    owner_id: hasPaper(u, 'owner_id'),
+  });
+
+  // Unsaved checklist edits per unit, so a re-render (e.g. after adding an expense) keeps them.
+  const paperDrafts = {};
+
   function papersPanelHtml(unit) {
-    const p = unit.papers || {};
-    const orcr = ORCR[p.orcr] ? p.orcr : '';
+    const draft = paperDrafts[unit.id];
+    const shown = draft || savedPapers(unit);
+    const orcr = shown.orcr || '';
     return `<h2>Papers <span class="muted small" id="papers-count">${papersDone(unit)} of ${PAPERS.length} done</span></h2>
       <ul class="checklist">
         <li class="orcr-row">
@@ -724,9 +736,13 @@
           </div>
         </li>
         ${PAPERS.filter(([key]) => key !== 'orcr').map(([key, label]) => `<li><label>
-          <input type="checkbox" data-paper="${key}"${hasPaper(unit, key) ? ' checked' : ''}>
+          <input type="checkbox" data-paper="${key}"${shown[key] ? ' checked' : ''}>
           <span>${esc(label)}</span></label></li>`).join('')}
-      </ul>`;
+      </ul>
+      <div class="papers-actions">
+        <button class="btn" type="button" id="papers-save"${draft ? '' : ' disabled'}>Save papers</button>
+        <span class="unsaved" id="papers-status" aria-live="polite">${draft ? 'Unsaved changes' : ''}</span>
+      </div>`;
   }
 
   async function renderUnitDetail(id, token) {
@@ -909,25 +925,41 @@
       });
     }
 
-    view.querySelectorAll('[data-paper]').forEach((input) => {
-      input.addEventListener('change', async () => {
-        const key = input.dataset.paper;
-        const value = input.type === 'radio' ? (input.value || null) : input.checked;
-        const previous = unit.papers ? unit.papers[key] : undefined;
-        const group = view.querySelectorAll(`[data-paper="${key}"]`);
-        group.forEach((el) => { el.disabled = true; });
-        try {
-          await api.setPaper(unit.id, key, value);
-          unit.papers = { ...(unit.papers || {}), [key]: value };
-          view.querySelector('#papers-count').textContent = `${papersDone(unit)} of ${PAPERS.length} done`;
-        } catch (err) {
-          // Put the controls back the way they were.
-          if (input.type === 'radio') group.forEach((el) => { el.checked = el.value === (ORCR[previous] ? previous : ''); });
-          else input.checked = !input.checked;
-          toast(friendlyError(err), 'err');
-        } finally { group.forEach((el) => { el.disabled = false; }); }
-      });
+    // Papers checklist: edits stay local until "Save papers".
+    const papersPanel = view.querySelector('#papers-panel');
+    const papersSave = papersPanel.querySelector('#papers-save');
+    const papersStatus = papersPanel.querySelector('#papers-status');
+    const readPapers = () => ({
+      orcr: papersPanel.querySelector('input[name=orcr]:checked').value || null,
+      deed: papersPanel.querySelector('[data-paper=deed]').checked,
+      owner_id: papersPanel.querySelector('[data-paper=owner_id]').checked,
     });
+    const papersDirty = () => JSON.stringify(readPapers()) !== JSON.stringify(savedPapers(unit));
+    const showPapersState = () => {
+      const dirty = papersDirty();
+      if (dirty) paperDrafts[unit.id] = readPapers(); else delete paperDrafts[unit.id];
+      papersSave.disabled = !dirty;
+      papersStatus.textContent = dirty ? 'Unsaved changes' : '';
+    };
+    papersPanel.addEventListener('change', showPapersState);
+    papersSave.addEventListener('click', async () => {
+      const values = readPapers();
+      papersSave.disabled = true;
+      papersStatus.textContent = 'Saving…';
+      try {
+        await api.setPapers(unit.id, values);
+        unit.papers = { ...(unit.papers || {}), ...values };
+        delete paperDrafts[unit.id];
+        papersPanel.querySelector('#papers-count').textContent = `${papersDone(unit)} of ${PAPERS.length} done`;
+        toast('Papers saved.');
+      } catch (err) {
+        toast(friendlyError(err), 'err');
+      }
+      showPapersState();
+    });
+    leaveGuard = () => (paperDrafts[unit.id]
+      ? { message: 'You have unsaved changes to the papers. Leave without saving?', discard: () => { delete paperDrafts[unit.id]; } }
+      : null);
 
     loadGallery(unit, token);
   }
@@ -1407,7 +1439,25 @@
 
   // ---------- Start ----------
 
+  // A page with unsaved edits sets leaveGuard to return { message, discard } while
+  // there is something to lose; navigating away asks first.
+  let leaveGuard = null;
+  let currentHash = location.hash;
+  window.addEventListener('beforeunload', (e) => {
+    if (leaveGuard && leaveGuard()) { e.preventDefault(); e.returnValue = ''; }
+  });
+
   window.addEventListener('hashchange', () => {
+    const pending = leaveGuard && leaveGuard();
+    if (pending) {
+      if (!confirm(pending.message)) {
+        history.replaceState(null, '', currentHash || '#/'); // replaceState doesn't fire hashchange
+        return;
+      }
+      pending.discard();
+    }
+    leaveGuard = null;
+    currentHash = location.hash;
     view.innerHTML = '<p class="loading">Loading…</p>';
     window.scrollTo(0, 0);
     route();
