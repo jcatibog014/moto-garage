@@ -790,16 +790,18 @@
         </div>
       </div>
 
-      <section class="panel details-panel" id="details-panel">
-        <h2>Details</h2>
-        <dl class="details details-grid">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
-        ${unit.notes ? `<p class="notes">${esc(unit.notes)}</p>` : ''}
-      </section>
+      <div class="top-row">
+        <section class="panel details-panel" id="details-panel">
+          <h2>Details</h2>
+          <dl class="details">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+          ${unit.notes ? `<p class="notes">${esc(unit.notes)}</p>` : ''}
+        </section>
 
-      <section class="panel gallery" id="gallery" aria-label="Photos">
-        <div class="gallery-head"><h2>Photos</h2></div>
-        <p class="muted small">${unit.photo_count ? 'Loading photos…' : ''}</p>
-      </section>
+        <section class="panel gallery" id="gallery" aria-label="Photos">
+          <div class="gallery-head"><h2>Photos</h2></div>
+          <p class="muted small">${unit.photo_count ? 'Loading photos…' : ''}</p>
+        </section>
+      </div>
 
       <div class="ledger panel">
         <div class="ledger-row"><span>Bought for</span><span>${money(unit.purchase_price)}</span></div>
