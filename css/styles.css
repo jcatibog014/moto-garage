@@ -287,6 +287,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .auth-card { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px 22px; box-shadow: var(--shadow); }
 .auth-card h1 { margin-bottom: 6px; }
 .auth-card form { margin-top: 18px; }
+.forgot { margin-top: 8px; font-size: 0.9rem; color: var(--muted); }
 .auth-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.1rem; margin-bottom: 22px; }
 .steps { padding-left: 20px; margin: 0 0 12px; }
 .steps li { margin-bottom: 8px; }

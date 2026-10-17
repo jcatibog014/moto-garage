@@ -1,7 +1,13 @@
-// Supabase connection. Find both values in the Supabase dashboard under
-// Project Settings -> API. The anon (public) key is meant to be used in the
-// browser; row level security in supabase/schema.sql protects the data.
+// Firebase web app config (Firebase console -> Project settings -> Your apps).
+// These values are meant to be public; firestore.rules decides who can read
+// and write the data.
 window.MOTO_CONFIG = {
-  SUPABASE_URL: 'https://YOUR-PROJECT.supabase.co',
-  SUPABASE_ANON_KEY: 'YOUR-ANON-KEY',
+  firebase: {
+    apiKey: 'AIzaSyALeSRPW6HeOYiT05Qj8zMorg5BixfHots',
+    authDomain: 'moto-garage-dmem.firebaseapp.com',
+    projectId: 'moto-garage-dmem',
+    storageBucket: 'moto-garage-dmem.firebasestorage.app',
+    messagingSenderId: '135306670570',
+    appId: '1:135306670570:web:4ffa7c1a7727fa7f818293',
+  },
 };

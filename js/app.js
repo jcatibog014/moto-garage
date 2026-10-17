@@ -5,9 +5,9 @@
   const topbar = document.getElementById('topbar');
   const toastEl = document.getElementById('toast');
 
-  const cfg = window.MOTO_CONFIG || {};
-  const configured = Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) &&
-    !/YOUR-/.test(cfg.SUPABASE_URL + cfg.SUPABASE_ANON_KEY);
+  const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
+  const cfg = (window.MOTO_CONFIG || {}).firebase || {};
+  const configured = Boolean(cfg.apiKey && cfg.projectId) && !/YOUR-/.test(cfg.apiKey + cfg.projectId);
 
   const TYPES = { motorcycle: 'Motorcycle', car: 'Car' };
   const STATUS = { in_stock: 'In stock', sold: 'Sold' };
@@ -70,11 +70,10 @@
   }
 
   function friendlyError(err) {
+    const code = (err && err.code) || '';
     const msg = (err && err.message) || String(err);
-    if (/does not exist|Could not find the table|PGRST205|42P01/.test(msg + (err && err.code))) {
-      return 'The database tables are missing. Run supabase/schema.sql in the Supabase SQL Editor (see README).';
-    }
-    if (/Failed to fetch|NetworkError/i.test(msg)) return 'Can’t reach the server. Check your internet connection.';
+    if (code === 'permission-denied') return 'Your account isn’t on the team list. Ask the owner to add your email to firestore.rules.';
+    if (code === 'unavailable' || /Failed to fetch|NetworkError|offline/i.test(msg)) return 'Can’t reach the server. Check your internet connection.';
     return msg;
   }
 
@@ -136,18 +135,79 @@
 
   // ---------- Data ----------
 
+  // Firestore layout: units/{id} with a running `total_expenses`, and
+  // units/{id}/expenses/{id}. Every expense write updates the total in the same batch.
+  let fb = null; // Firebase SDK functions, loaded in start()
+  let auth = null;
   let db = null;
   let session = null;
 
-  async function q(request) {
-    const { data, error } = await request;
-    if (error) throw error;
-    return data;
+  const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+  const millis = (ts) => (ts && ts.toMillis ? ts.toMillis() : 0);
+
+  // Adds the derived totals that the screens use.
+  function summarize(id, d) {
+    const total_expenses = round2(d.total_expenses);
+    const total_cost = round2(d.purchase_price + total_expenses);
+    return {
+      ...d,
+      id,
+      total_expenses,
+      total_cost,
+      profit: d.status === 'sold' ? round2(d.sale_price - total_cost) : null,
+      days_in_stock: Math.round((Date.parse(d.sale_date || today()) - Date.parse(d.purchase_date)) / 864e5),
+    };
   }
 
-  const loadUnits = () => q(db.from('unit_summary').select('*')
-    .order('purchase_date', { ascending: false })
-    .order('created_at', { ascending: false }));
+  const unitsCol = () => fb.collection(db, 'units');
+  const unitRef = (id) => fb.doc(db, 'units', id);
+  const expensesCol = (unitId) => fb.collection(db, 'units', unitId, 'expenses');
+
+  const api = {
+    async listUnits() {
+      const snap = await fb.getDocs(unitsCol());
+      return snap.docs.map((d) => summarize(d.id, d.data())).sort((a, b) =>
+        b.purchase_date.localeCompare(a.purchase_date) || millis(b.created_at) - millis(a.created_at));
+    },
+    async getUnit(id) {
+      const snap = await fb.getDoc(unitRef(id));
+      return snap.exists() ? summarize(snap.id, snap.data()) : null;
+    },
+    async listExpenses(unitId) {
+      const snap = await fb.getDocs(expensesCol(unitId));
+      return snap.docs.map((d) => ({ ...d.data(), id: d.id })).sort((a, b) =>
+        a.date.localeCompare(b.date) || millis(a.created_at) - millis(b.created_at));
+    },
+    async createUnit(values) {
+      const ref = await fb.addDoc(unitsCol(), {
+        ...values, status: 'in_stock', total_expenses: 0,
+        created_at: fb.serverTimestamp(), created_by: session.email,
+      });
+      return ref.id;
+    },
+    updateUnit: (id, values) => fb.updateDoc(unitRef(id), values),
+    async deleteUnit(id) {
+      const expenses = await fb.getDocs(expensesCol(id));
+      const batch = fb.writeBatch(db);
+      expenses.docs.forEach((d) => batch.delete(d.ref));
+      batch.delete(unitRef(id));
+      await batch.commit();
+    },
+    addExpense(unitId, values) {
+      const batch = fb.writeBatch(db);
+      batch.set(fb.doc(expensesCol(unitId)), { ...values, created_at: fb.serverTimestamp(), created_by: session.email });
+      batch.update(unitRef(unitId), { total_expenses: fb.increment(values.amount) });
+      return batch.commit();
+    },
+    deleteExpense(unitId, expense) {
+      const batch = fb.writeBatch(db);
+      batch.delete(fb.doc(db, 'units', unitId, 'expenses', expense.id));
+      batch.update(unitRef(unitId), { total_expenses: fb.increment(-expense.amount) });
+      return batch.commit();
+    },
+  };
+
+  const loadUnits = () => api.listUnits();
 
   // ---------- Router ----------
 
@@ -156,7 +216,7 @@
 
   async function route() {
     const token = ++routeToken;
-    if (!configured || !window.supabase) return renderSetup();
+    if (!configured || !fb) return renderSetup();
     if (!session) {
       topbar.hidden = true;
       return renderLogin();
@@ -200,17 +260,16 @@
 
   function renderSetup() {
     topbar.hidden = true;
-    const offline = configured && !window.supabase;
+    const offline = configured && !fb;
     view.innerHTML = `<div class="auth page"><div class="auth-card">
       ${brandMark()}
       <h1>${offline ? 'Can’t load the app' : 'Finish setting up'}</h1>
       ${offline
-        ? '<p>The Supabase library didn’t load. Check your internet connection and refresh.</p>'
-        : `<p>Connect the app to your Supabase project:</p>
+        ? '<p>Firebase didn’t load. Check your internet connection and refresh.</p>'
+        : `<p>Connect the app to your Firebase project:</p>
            <ol class="steps">
-             <li>Create a free project at <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a>.</li>
-             <li>In the SQL Editor, run <code>supabase/schema.sql</code>.</li>
-             <li>Copy the Project URL and anon key (Project Settings → API) into <code>js/config.js</code>.</li>
+             <li>Create a project at <a href="https://console.firebase.google.com" target="_blank" rel="noopener">console.firebase.google.com</a> with Firestore and Email/Password sign-in.</li>
+             <li>Copy the web app config into <code>js/config.js</code>.</li>
            </ol>
            <p class="muted small">The README has the full steps.</p>`}
     </div></div>`;
@@ -233,22 +292,43 @@
         <p class="form-error" id="login-error" role="alert"></p>
         <button class="btn btn-block" type="submit">Log in</button>
       </form>
-      <p class="muted small">No account yet? Ask the owner to add you in Supabase.</p>
+      <button class="btn-ghost btn-block forgot" type="button" id="forgot">Forgot password?</button>
+      <p class="muted small">No account yet? Ask the owner to add you.</p>
     </div></div>`;
 
     const form = view.querySelector('#login-form');
+    view.querySelector('#forgot').addEventListener('click', (e) => {
+      const errorEl = form.querySelector('#login-error');
+      const email = form.elements.email.value.trim();
+      if (!email || !form.elements.email.validity.valid) {
+        setError(form, 'email', 'Enter your email first, then tap “Forgot password?”.');
+        form.elements.email.focus();
+        return;
+      }
+      setError(form, 'email', '');
+      busy(e.currentTarget, async () => {
+        try {
+          await fb.sendPasswordResetEmail(auth, email);
+        } catch (err) {
+          if (!/user-not-found|invalid-email/.test(err.code)) { errorEl.textContent = friendlyError(err); return; }
+        }
+        // Same message either way, so the form doesn't reveal which emails have accounts.
+        toast('If that email has an account, a reset link is on its way. Check your inbox and spam.');
+      });
+    });
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const errorEl = form.querySelector('#login-error');
       errorEl.textContent = '';
       if (!validate(form)) return;
       busy(form.querySelector('button'), async () => {
-        const { error } = await db.auth.signInWithPassword({
-          email: form.elements.email.value.trim(),
-          password: form.elements.password.value,
-        });
-        if (error) {
-          errorEl.textContent = /invalid login/i.test(error.message) ? 'Wrong email or password.' : friendlyError(error);
+        try {
+          await fb.signInWithEmailAndPassword(auth, form.elements.email.value.trim(), form.elements.password.value);
+        } catch (err) {
+          errorEl.textContent =
+            /invalid-credential|wrong-password|user-not-found|invalid-email/.test(err.code) ? 'Wrong email or password.'
+            : err.code === 'auth/too-many-requests' ? 'Too many tries. Wait a few minutes and try again.'
+            : friendlyError(err);
         }
       });
     });
@@ -418,11 +498,7 @@
   // ---------- Unit detail ----------
 
   async function renderUnitDetail(id, token) {
-    const [unit, expenses] = await Promise.all([
-      q(db.from('unit_summary').select('*').eq('id', id).maybeSingle()),
-      q(db.from('expenses').select('*').eq('unit_id', id)
-        .order('date', { ascending: true }).order('created_at', { ascending: true })),
-    ]);
+    const [unit, expenses] = await Promise.all([api.getUnit(id), api.listExpenses(id)]);
     if (stale(token)) return;
     if (!unit) { view.innerHTML = notFound(); return; }
 
@@ -522,7 +598,7 @@
     view.querySelector('#delete-unit').addEventListener('click', async () => {
       if (!confirm(`Delete ${unitName(unit)}? Its expenses will be deleted too. This can’t be undone.`)) return;
       try {
-        await q(db.from('units').delete().eq('id', unit.id));
+        await api.deleteUnit(unit.id);
         toast('Unit deleted.');
         location.hash = '#/units';
       } catch (err) { toast(friendlyError(err), 'err'); }
@@ -532,7 +608,7 @@
       btn.addEventListener('click', async () => {
         if (!confirm('Delete this expense?')) return;
         try {
-          await q(db.from('expenses').delete().eq('id', btn.dataset.deleteExpense));
+          await api.deleteExpense(unit.id, expenses.find((x) => x.id === btn.dataset.deleteExpense));
           toast('Expense deleted.');
           route();
         } catch (err) { toast(friendlyError(err), 'err'); }
@@ -545,7 +621,7 @@
       if (!validate(expenseForm)) return;
       busy(expenseForm.querySelector('button[type=submit]'), async () => {
         try {
-          await q(db.from('expenses').insert({ ...formValues(expenseForm), unit_id: unit.id }));
+          await api.addExpense(unit.id, formValues(expenseForm));
           toast('Expense added.');
           await route();
         } catch (err) { toast(friendlyError(err), 'err'); }
@@ -574,7 +650,7 @@
         if (!ok) return;
         busy(saleForm.querySelector('button[type=submit]'), async () => {
           try {
-            await q(db.from('units').update({ ...formValues(saleForm), status: 'sold' }).eq('id', unit.id));
+            await api.updateUnit(unit.id, { ...formValues(saleForm), status: 'sold' });
             toast('Marked as sold.');
             await route();
           } catch (err) { toast(friendlyError(err), 'err'); }
@@ -587,7 +663,7 @@
       undo.addEventListener('click', async () => {
         if (!confirm('Move this unit back to in stock? The sale price and date will be cleared.')) return;
         try {
-          await q(db.from('units').update({ status: 'in_stock', sale_date: null, sale_price: null, sold_to: null }).eq('id', unit.id));
+          await api.updateUnit(unit.id, { status: 'in_stock', sale_date: null, sale_price: null, sold_to: null });
           toast('Moved back to in stock.');
           route();
         } catch (err) { toast(friendlyError(err), 'err'); }
@@ -600,7 +676,7 @@
   async function renderUnitForm(id, token) {
     let unit = { type: 'motorcycle', purchase_date: today(), status: 'in_stock' };
     if (id) {
-      unit = await q(db.from('units').select('*').eq('id', id).maybeSingle());
+      unit = await api.getUnit(id);
       if (stale(token)) return;
       if (!unit) { view.innerHTML = notFound(); return; }
     }
@@ -662,13 +738,13 @@
         try {
           const values = formValues(form);
           if (id) {
-            await q(db.from('units').update(values).eq('id', id));
+            await api.updateUnit(id, values);
             toast('Changes saved.');
             location.hash = '#/units/' + id;
           } else {
-            const created = await q(db.from('units').insert(values).select('id').single());
+            const newId = await api.createUnit(values);
             toast('Unit added. You can add its expenses now.');
-            location.hash = '#/units/' + created.id;
+            location.hash = '#/units/' + newId;
           }
         } catch (err) { toast(friendlyError(err), 'err'); }
       });
@@ -683,22 +759,33 @@
     route();
   });
 
-  if (!configured || !window.supabase) {
-    renderSetup();
-    return;
+  async function start() {
+    if (!configured) return renderSetup();
+    try {
+      const mods = await Promise.all(['app', 'auth', 'firestore'].map((m) => import(`${FIREBASE_SDK}firebase-${m}.js`)));
+      fb = Object.assign({}, ...mods);
+    } catch (err) {
+      console.error(err);
+      return renderSetup();
+    }
+    const app = fb.initializeApp(cfg);
+    auth = fb.getAuth(app);
+    db = fb.getFirestore(app);
+
+    // Re-render only on the first auth state and when signing in or out.
+    let first = true;
+    fb.onAuthStateChanged(auth, (user) => {
+      const changed = Boolean(user) !== Boolean(session);
+      session = user;
+      if (first || changed) route();
+      first = false;
+    });
+
+    document.getElementById('logout').addEventListener('click', async () => {
+      await fb.signOut(auth);
+      location.hash = '#/';
+    });
   }
 
-  db = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-
-  // Re-render only when signing in or out, not on token refreshes (that would wipe open forms).
-  db.auth.onAuthStateChange((event, next) => {
-    const changed = Boolean(next) !== Boolean(session);
-    session = next;
-    if (event === 'INITIAL_SESSION' || changed) setTimeout(route, 0);
-  });
-
-  document.getElementById('logout').addEventListener('click', async () => {
-    await db.auth.signOut();
-    location.hash = '#/';
-  });
+  start();
 })();

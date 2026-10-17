@@ -1,0 +1,24 @@
+rules_version = '2';
+
+// Only team members listed below can read or change data.
+// To add a partner: create their login in Firebase Authentication first,
+// then add their email here (lowercase) and run:
+//   npx firebase-tools deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isTeam() {
+      return request.auth != null
+        && request.auth.token.email.lower() in [
+          'jcatibog014@gmail.com'
+        ];
+    }
+
+    match /units/{unitId} {
+      allow read, write: if isTeam();
+
+      match /expenses/{expenseId} {
+        allow read, write: if isTeam();
+      }
+    }
+  }
+}
