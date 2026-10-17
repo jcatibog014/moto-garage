@@ -4,6 +4,22 @@
   const view = document.getElementById('view');
   const topbar = document.getElementById('topbar');
   const toastEl = document.getElementById('toast');
+  const bottomNav = document.getElementById('bottom-nav');
+
+  // Top bar and phone bottom bar are hidden on the login and setup screens.
+  function showChrome(on) {
+    topbar.hidden = !on;
+    bottomNav.hidden = !on;
+    document.body.classList.toggle('has-bottom-nav', on);
+  }
+
+  // Shown while a page loads, in place of "Loading…" text.
+  const skeleton = () => `<div class="page skeleton" aria-busy="true" aria-label="Loading">
+    <span class="sk sk-title"></span>
+    <span class="sk sk-hero"></span>
+    <div class="sk-row"><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span></div>
+    <span class="sk sk-block"></span>
+  </div>`;
 
   const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
   const cfg = (window.MOTO_CONFIG || {}).firebase || {};
@@ -173,11 +189,14 @@
     });
   }
 
-  function toJpeg(src, maxSide, quality, square) {
+  // Scales an image to fit maxSide, center-cropping to `aspect` (width / height) when given.
+  function toJpeg(src, maxSide, quality, aspect) {
     const w = src.width;
     const h = src.height;
     let sx = 0, sy = 0, sw = w, sh = h;
-    if (square) { const s = Math.min(w, h); sx = (w - s) / 2; sy = (h - s) / 2; sw = sh = s; }
+    if (aspect) {
+      if (w / h > aspect) { sw = h * aspect; sx = (w - sw) / 2; } else { sh = w / aspect; sy = (h - sh) / 2; }
+    }
     const scale = Math.min(1, maxSide / Math.max(sw, sh));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(sw * scale));
@@ -194,7 +213,19 @@
     const img = await loadImage(file);
     let data = toJpeg(img, 1280, 0.72);
     if (data.length > 650000) data = toJpeg(img, 1024, 0.6);
-    return { data, thumb: toJpeg(img, 128, 0.7, true) };
+    return { data, thumb: toJpeg(img, 128, 0.7, 1), card: toJpeg(img, 480, 0.62, 4 / 3) };
+  }
+
+  // The 4:3 card image of a photo; photos saved before cards existed get one made from the full photo.
+  async function cardFor(photo) {
+    if (photo.card) return photo.card;
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = photo.data;
+    });
+    return toJpeg(img, 480, 0.62, 4 / 3);
   }
 
   const unitThumb = (u, large) => (u.thumb
@@ -300,20 +331,24 @@
       const batch = fb.writeBatch(db);
       batch.set(ref, { ...photo, created_at: fb.serverTimestamp(), created_by: session.email });
       const patch = { photo_count: fb.increment(1) };
-      if (makeCover) Object.assign(patch, { thumb: photo.thumb, cover_id: ref.id });
+      if (makeCover) Object.assign(patch, { thumb: photo.thumb, card: photo.card || null, cover_id: ref.id });
       batch.update(unitRef(unitId), patch);
       await batch.commit();
       return ref.id;
     },
-    deletePhoto(unitId, photo, nextCover, wasCover) {
+    async deletePhoto(unitId, photo, nextCover, wasCover) {
+      const card = wasCover && nextCover ? await cardFor(nextCover).catch(() => null) : null;
       const batch = fb.writeBatch(db);
       batch.delete(fb.doc(db, 'units', unitId, 'photos', photo.id));
       const patch = { photo_count: fb.increment(-1) };
-      if (wasCover) Object.assign(patch, nextCover ? { thumb: nextCover.thumb, cover_id: nextCover.id } : { thumb: null, cover_id: null });
+      if (wasCover) Object.assign(patch, nextCover ? { thumb: nextCover.thumb, card, cover_id: nextCover.id } : { thumb: null, card: null, cover_id: null });
       batch.update(unitRef(unitId), patch);
       return batch.commit();
     },
-    setCover: (unitId, photo) => fb.updateDoc(unitRef(unitId), { thumb: photo.thumb, cover_id: photo.id }),
+    async setCover(unitId, photo) {
+      const card = await cardFor(photo).catch(() => null);
+      return fb.updateDoc(unitRef(unitId), { thumb: photo.thumb, card, cover_id: photo.id });
+    },
   };
 
   // Shrinks and saves photos one by one. `hasCover` says whether the unit already has a cover.
@@ -340,10 +375,10 @@
     const token = ++routeToken;
     if (!configured || !fb) return renderSetup();
     if (!session) {
-      topbar.hidden = true;
+      showChrome(false);
       return renderLogin();
     }
-    topbar.hidden = false;
+    showChrome(true);
 
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
     const nav = !parts.length ? 'dashboard' : parts[0] === 'reports' ? 'reports' : parts[1] === 'new' ? 'new' : 'units';
@@ -352,7 +387,7 @@
       else a.removeAttribute('aria-current');
     });
 
-    if (!view.querySelector('.page')) view.innerHTML = '<p class="loading">Loading…</p>';
+    if (!view.querySelector('.page')) view.innerHTML = skeleton();
     try {
       if (!parts.length) await renderDashboard(token);
       else if (parts[0] === 'reports') await renderReports(token);
@@ -383,7 +418,7 @@
   // ---------- Setup & login ----------
 
   function renderSetup() {
-    topbar.hidden = true;
+    showChrome(false);
     const offline = configured && !fb;
     view.innerHTML = `<div class="auth page"><div class="auth-card">
       ${brandMark()}
@@ -477,7 +512,7 @@
           <span class="meta">${plural(u.days_in_stock, 'day')} in stock</span>`;
       }
     }
-    return `<a class="unit-row" href="#/units/${u.id}">
+    return `<a class="unit-row unit-item" href="#/units/${u.id}">
       ${unitThumb(u)}
       <span class="unit-main">
         <strong>${esc(unitName(u))}</strong>
@@ -485,6 +520,71 @@
       </span>
       <span class="unit-figs">${figures}</span>
     </a>`;
+  }
+
+  // Photo-first card for the Units grid.
+  function unitCard(u) {
+    const img = u.card || u.thumb;
+    let price;
+    let sub;
+    if (u.status === 'sold') {
+      price = `<span class="${profitClass(u.profit)}">${signed(u.profit)}</span>`;
+      sub = `Profit · sold ${fmtDate(u.sale_date)}`;
+    } else if (u.status === 'reserved') {
+      price = money(u.agreed_price != null ? u.agreed_price : u.total_cost);
+      sub = `${pesoShort.format(u.deposit || 0)} down · ${esc(u.reserved_by || '')}`;
+    } else {
+      price = money(u.total_cost);
+      sub = `Cost · ${plural(u.days_in_stock, 'day')} in stock`;
+    }
+    return `<a class="unit-card unit-item" href="#/units/${u.id}">
+      <span class="card-media">
+        ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : ICONS[u.type]}
+        <span class="card-status ${u.status}">${STATUS[u.status]}</span>
+      </span>
+      <span class="card-body">
+        <strong class="card-title">${esc(unitName(u))}</strong>
+        ${u.plate_no ? `<span class="plate">${esc(u.plate_no)}</span>` : ''}
+        <span class="card-price">${price}</span>
+        <span class="meta">${sub}</span>
+      </span>
+    </a>`;
+  }
+
+  // Profit for each of the last `n` months, oldest first.
+  function monthlyProfit(sold, n) {
+    const now = today();
+    let y = Number(now.slice(0, 4));
+    let m = Number(now.slice(5, 7));
+    const keys = [];
+    for (let i = 0; i < n; i++) {
+      keys.unshift(`${y}-${String(m).padStart(2, '0')}`);
+      m--; if (m < 1) { m = 12; y--; }
+    }
+    return keys.map((key) => ({ key, profit: round2(sum(sold.filter((u) => u.sale_date.startsWith(key)), 'profit')) }));
+  }
+
+  // Small trend line of monthly profit for the dashboard hero tile.
+  function sparkline(series) {
+    const W = 300;
+    const H = 64;
+    const pad = 4;
+    const vals = series.map((s) => s.profit);
+    const max = Math.max(0, ...vals);
+    const min = Math.min(0, ...vals);
+    const span = max - min || 1;
+    const x = (i) => pad + (i * (W - pad * 2)) / Math.max(1, series.length - 1);
+    const y = (v) => pad + ((max - v) / span) * (H - pad * 2);
+    const line = 'M' + series.map((s, i) => `${x(i).toFixed(1)},${y(s.profit).toFixed(1)}`).join('L');
+    const area = `${line}L${x(series.length - 1).toFixed(1)},${y(0).toFixed(1)}L${x(0).toFixed(1)},${y(0).toFixed(1)}Z`;
+    const label = 'Profit, last ' + series.length + ' months: ' +
+      series.map((s) => `${MONTHS[Number(s.key.slice(5)) - 1]} ${signed(s.profit)}`).join(', ');
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(label)}">
+        <line class="zero" x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>
+        <path class="area" d="${area}"/>
+        <path class="line" d="${line}"/>
+      </svg>
+      <span class="spark-labels" aria-hidden="true"><span>${MONTHS[Number(series[0].key.slice(5)) - 1]}</span><span>${MONTHS[Number(series[series.length - 1].key.slice(5)) - 1]}</span></span>`;
   }
 
   const statusBadge = (s) => `<span class="badge ${s}">${STATUS[s]}</span>`;
@@ -539,12 +639,16 @@
 
     view.innerHTML = `<div class="page">
       <div class="page-head"><h1>Dashboard</h1></div>
-      <div class="stats">
+      <div class="stats bento">
+        <a class="stat hero" href="#/reports">
+          <span class="stat-label">Profit in ${monthName}</span>
+          <span class="stat-value ${profitClass(monthProfit)}">${signed(monthProfit)}</span>
+          <span class="stat-sub">${plural(soldMonth.length, 'unit')} sold · ${money(sum(soldMonth, 'sale_price'))} in sales</span>
+          ${sparkline(monthlyProfit(sold, 6))}
+        </a>
         ${stat('Units in stock', unsold.length, stockSub)}
         ${stat('Money in stock', money(sum(unsold, 'total_cost')), 'Purchase + expenses of unsold units')}
-        ${stat(`Profit in ${monthName}`, signed(monthProfit), `${plural(soldMonth.length, 'unit')} sold`, profitClass(monthProfit))}
-        ${stat('Total profit', signed(totalProfit), `${plural(sold.length, 'unit')} sold`, profitClass(totalProfit))}
-        ${stat('Total sales', money(sum(sold, 'sale_price')))}
+        ${stat('Total profit', signed(totalProfit), `${plural(sold.length, 'unit')} sold · ${money(sum(sold, 'sale_price'))} in sales`, profitClass(totalProfit))}
         ${stat('Deposits held', money(sum(reserved, 'deposit')), reserved.length ? `${plural(reserved.length, 'reserved unit')}` : 'No reservations')}
       </div>
       ${followUp.length ? `
@@ -552,7 +656,7 @@
           <h2>Papers to follow up</h2>
           <div class="unit-list">${followUp.map((f) => unitRow(f.u, {
             meta: f.meta, warn: true,
-            figures: `<span class="meta">${papersDone(f.u)} of ${PAPERS.length} papers done</span>`,
+            figures: `<span class="meta hide-mobile">${papersDone(f.u)} of ${PAPERS.length} papers done</span>`,
           })).join('')}</div>
         </section>` : ''}
       <div class="columns">
@@ -571,6 +675,13 @@
   // ---------- Units list ----------
 
   const filters = { q: '', type: '', status: '' };
+  const VIEW_KEY = 'moto-units-view';
+  let unitsView = 'grid';
+  try { unitsView = localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch (e) { /* storage blocked */ }
+  const VIEW_ICONS = {
+    grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>',
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>',
+  };
 
   function matches(u) {
     if (filters.type && u.type !== filters.type) return false;
@@ -589,8 +700,11 @@
       <div class="page-head">
         <h1>Units</h1>
         <div class="actions">
+          <div class="view-toggle" role="group" aria-label="View">
+            ${['grid', 'list'].map((v) => `<button type="button" data-view="${v}" aria-pressed="${unitsView === v}" aria-label="${v === 'grid' ? 'Photo grid' : 'List'}">${VIEW_ICONS[v]}</button>`).join('')}
+          </div>
           <button class="btn-secondary" type="button" id="export">Export CSV</button>
-          <a class="btn" href="#/units/new">+ Add unit</a>
+          <a class="btn hide-mobile" href="#/units/new">+ Add unit</a>
         </div>
       </div>
       <div class="filters">
@@ -599,7 +713,7 @@
         <select id="f-status" aria-label="Filter by status">${options({ unsold: 'Not sold yet', ...STATUS }, filters.status, 'All statuses')}</select>
       </div>
       <p class="list-summary" id="list-summary" aria-live="polite"></p>
-      <div class="unit-list panel-list" id="unit-list"></div>
+      <div id="unit-list"></div>
     </div>`;
 
     const list = view.querySelector('#unit-list');
@@ -611,11 +725,20 @@
         ? `${plural(shown.length, 'unit')} · cost ${money(sum(shown, 'total_cost'))}` +
           (soldShown.length ? ` · profit <span class="${profitClass(sum(soldShown, 'profit'))}">${signed(sum(soldShown, 'profit'))}</span>` : '')
         : '';
+      const grid = unitsView === 'grid' && shown.length;
+      list.className = grid ? 'unit-grid' : 'unit-list panel-list';
       list.innerHTML = shown.length
-        ? shown.map((u) => unitRow(u)).join('')
+        ? shown.map((u) => (grid ? unitCard(u) : unitRow(u))).join('')
         : `<p class="muted empty-list">${units.length ? 'No units match these filters.' : 'No units yet. Add your first one.'}</p>`;
     };
     draw();
+
+    view.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+      unitsView = b.dataset.view;
+      try { localStorage.setItem(VIEW_KEY, unitsView); } catch (e) { /* storage blocked */ }
+      view.querySelectorAll('[data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      draw();
+    }));
 
     [['f-q', 'q', 'input'], ['f-type', 'type', 'change'], ['f-status', 'status', 'change']].forEach(([id, key, evt]) => {
       view.querySelector('#' + id).addEventListener(evt, (e) => { filters[key] = e.target.value; draw(); });
@@ -963,6 +1086,11 @@
     if (stale(token)) return;
     // Cover first, then the rest in the order they were added.
     photos.sort((a, b) => (b.id === unit.cover_id) - (a.id === unit.cover_id));
+    // Units whose cover was set before card images existed get one now, in the background.
+    if (unit.cover_id && !unit.card) {
+      const cover = photos.find((p) => p.id === unit.cover_id);
+      if (cover) cardFor(cover).then((card) => api.updateUnit(unit.id, { card })).catch((e) => console.warn('Card image not saved', e));
+    }
 
     box.innerHTML = `
       <div class="gallery-head">
@@ -1491,7 +1619,7 @@
     }
     leaveGuard = null;
     currentHash = location.hash;
-    view.innerHTML = '<p class="loading">Loading…</p>';
+    view.innerHTML = skeleton();
     window.scrollTo(0, 0);
     route();
   });

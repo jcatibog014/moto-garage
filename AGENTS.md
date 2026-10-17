@@ -26,5 +26,5 @@ Moto Garage is a unit tracker for a motorcycle and car buy-and-sell business. It
 
 - Money is PHP, formatted with `Intl.NumberFormat('en-PH', { currency: 'PHP' })` through `money()` and `signed()`.
 - Dates are `YYYY-MM-DD` strings. `today()` returns the local date, not UTC.
-- Colors are CSS variables on `:root` (light purple theme; `--accent` #7353d9, `--accent-strong` for accent text on tinted backgrounds). Use `color-mix(in srgb, …)`. The layout is mobile-first, with breakpoints at 640, 768 and 1024px at the end of `styles.css`.
+- Colors are CSS variables on `:root` (light purple "Soft UI" theme from UI/UX Pro Max; `--accent` #7c3aed, `--accent-strong` for accent text). Font: Plus Jakarta Sans. Phones (<768px) use `#bottom-nav` instead of the top tabs; `showChrome()` toggles both. The Units page has a photo grid (`unitCard()`, using the 4:3 `card` image on each unit) and a list view; the dashboard is a bento grid with a 6-month `sparkline()`. Use `color-mix(in srgb, …)`. The layout is mobile-first, with breakpoints at 640, 768 and 1024px at the end of `styles.css`.
 - The Firebase web config in `js/config.js` is public by design. Never commit service-account keys.
