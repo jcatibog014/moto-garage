@@ -2,9 +2,12 @@
 
 A web app for a buy-and-sell business that tracks every motorcycle and car: what it was bought for and when, what was spent on it (transport, repair, parts, documents, cleaning), and what it sold for. It works out the total cost, profit and days in stock for each unit, and shows totals on a dashboard.
 
-- **Dashboard**: units in stock, money tied up in stock, profit this month, total profit, total sales, average profit per unit, recent sales, and the units that have been in stock the longest.
-- **Units**: search and filter by type and status, plus an **Export CSV** button for Excel or backups.
-- **Unit page**: a cost breakdown, an expense list with a quick "Add expense" form, and a **Mark as sold** form that shows the profit as you type the price.
+- **Dashboard**: units in stock, money tied up in stock, profit this month, total profit, total sales, deposits held, papers to follow up, recent sales, and the units that have been in stock the longest.
+- **Units**: each unit's cover photo, search (brand, model, plate, buyer, engine/chassis no.), filters by type and status, plus an **Export CSV** button for Excel or backups.
+- **Unit page**: up to 8 photos (tap to enlarge, choose the cover), a cost breakdown, expenses, **Sell now** or **Reserve with deposit** (with agreed price and the balance to collect), and a papers checklist (OR/CR, deeds of sale, HPG clearance, LTO transfer) with a reminder about the 20-working-day transfer deadline.
+- **Reports**: profit by month (chart and table), average margin and days to sell, profit by type and by brand, the most and least profitable units, and where expenses go. You can view the last 12 months, a single year, or all time.
+
+Photos are shrunk in the browser (about 100–200 KB each) and saved in Firestore, because file storage needs the paid Blaze plan.
 - Amounts are in Philippine Pesos (₱). Works on phones and computers.
 
 Data is stored in **Firebase Firestore** on the free Spark plan (no credit card). Only team members listed in `firestore.rules` can log in and see the data.

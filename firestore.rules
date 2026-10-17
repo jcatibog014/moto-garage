@@ -19,6 +19,15 @@ service cloud.firestore {
       match /expenses/{expenseId} {
         allow read, write: if isTeam();
       }
+
+      match /photos/{photoId} {
+        allow read, write: if isTeam();
+      }
+    }
+
+    // The Reports page reads every unit's expenses in one collection group query.
+    match /{path=**}/expenses/{expenseId} {
+      allow read: if isTeam();
     }
   }
 }
