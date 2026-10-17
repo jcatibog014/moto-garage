@@ -4,7 +4,7 @@ A web app for a buy-and-sell business that tracks every motorcycle and car: what
 
 - **Dashboard**: units in stock, money tied up in stock, profit this month, total profit, total sales, deposits held, papers to follow up, recent sales, and the units that have been in stock the longest.
 - **Units**: each unit's cover photo, search (brand, model, plate, buyer, engine/chassis no.), filters by type and status, plus an **Export CSV** button for Excel or backups.
-- **Unit page**: up to 8 photos (tap to enlarge, choose the cover), a cost breakdown, expenses, **Sell now** or **Reserve with deposit** (with agreed price and the balance to collect), and a papers summary: OR/CR (original or xerox), Deed of Sale, and ID with Signature of the Owner. Unsold units with missing papers appear on the dashboard.
+- **Unit page**: details at the top, a compact row of up to 8 photo thumbnails (tap one to view it full screen, set the cover or delete it), a cost breakdown, expenses, **Sell now** or **Reserve with deposit** (with agreed price and the balance to collect), and a papers summary: OR/CR (original or xerox), Deed of Sale, and ID with Signature of the Owner. Unsold units with missing papers appear on the dashboard.
 - **Add / edit unit**: one form for all details, including photos (when adding) and papers, with a **Save** button pinned to the bottom of the screen. Leaving with unsaved changes asks first.
 - **Reports**: profit by month (chart and table), average margin and days to sell, profit by type and by brand, the most and least profitable units, and where expenses go. You can view the last 12 months, a single year, or all time.
 

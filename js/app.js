@@ -790,7 +790,14 @@
         </div>
       </div>
 
+      <section class="panel details-panel" id="details-panel">
+        <h2>Details</h2>
+        <dl class="details details-grid">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+        ${unit.notes ? `<p class="notes">${esc(unit.notes)}</p>` : ''}
+      </section>
+
       <section class="panel gallery" id="gallery" aria-label="Photos">
+        <div class="gallery-head"><h2>Photos</h2></div>
         <p class="muted small">${unit.photo_count ? 'Loading photos…' : ''}</p>
       </section>
 
@@ -835,11 +842,6 @@
             ${salePanelHtml(unit)}
           </section>
           <section class="panel" id="papers-panel">${papersPanelHtml(unit)}</section>
-          <section class="panel">
-            <h2>Details</h2>
-            <dl class="details">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
-            ${unit.notes ? `<p class="notes">${esc(unit.notes)}</p>` : ''}
-          </section>
         </div>
       </div>
     </div>`;
@@ -945,100 +947,125 @@
     loadGallery(unit, token);
   }
 
+  // Photos panel: a compact strip of thumbnails. Tapping one opens the photo viewer,
+  // where the full photo can be browsed, set as cover or deleted.
   async function loadGallery(unit, token) {
     const box = view.querySelector('#gallery');
     let photos = [];
     try {
       photos = unit.photo_count ? await api.listPhotos(unit.id) : [];
     } catch (err) {
-      if (!stale(token)) box.innerHTML = `<p class="muted small">Couldn’t load photos. ${esc(friendlyError(err))}</p>`;
+      if (!stale(token)) box.querySelector('p').textContent = 'Couldn’t load photos. ' + friendlyError(err);
       return;
     }
     if (stale(token)) return;
-    let selected = photos.find((p) => p.id === unit.cover_id) || photos[0];
+    // Cover first, then the rest in the order they were added.
+    photos.sort((a, b) => (b.id === unit.cover_id) - (a.id === unit.cover_id));
 
-    const draw = () => {
-      const isCover = selected && selected.id === unit.cover_id;
-      box.innerHTML = `
-        ${selected ? `
-          <button type="button" class="gallery-main" id="photo-open" aria-label="View photo full size">
-            <img src="${esc(selected.data)}" alt="Photo of ${esc(unitName(unit))}">
-          </button>` : `
-          <div class="gallery-empty">${ICONS.camera}<p>No photos yet. Add photos of the unit so everyone can see its condition.</p></div>`}
-        ${photos.length > 1 ? `<div class="gallery-strip">${photos.map((p) => `
-          <button type="button" class="gallery-thumb" data-photo="${p.id}" aria-label="Show photo" aria-pressed="${p === selected}">
-            <img src="${esc(p.thumb)}" alt="">${p.id === unit.cover_id ? '<span class="cover-tag">Cover</span>' : ''}
-          </button>`).join('')}</div>` : ''}
-        <div class="gallery-actions">
-          ${photos.length < MAX_PHOTOS ? `<label class="btn-secondary file-btn">
-            ${ICONS.camera} Add photos
-            <input type="file" accept="image/*" multiple id="photo-input">
-          </label>` : `<span class="muted small">${MAX_PHOTOS} photos max.</span>`}
-          ${selected && !isCover ? '<button type="button" class="btn-ghost" id="photo-cover">Set as cover</button>' : ''}
-          ${selected ? '<button type="button" class="btn-ghost danger" id="photo-delete">Delete photo</button>' : ''}
-          <span class="muted small">${photos.length} of ${MAX_PHOTOS}</span>
-        </div>`;
+    box.innerHTML = `
+      <div class="gallery-head">
+        <h2>Photos <span class="muted small">${photos.length} of ${MAX_PHOTOS}</span></h2>
+        ${photos.length < MAX_PHOTOS ? `<label class="btn-secondary file-btn">
+          ${ICONS.camera} Add photos
+          <input type="file" accept="image/*" multiple id="photo-input">
+        </label>` : ''}
+      </div>
+      ${photos.length ? `<div class="gallery-strip">${photos.map((p, i) => `
+        <button type="button" class="gallery-thumb" data-index="${i}" aria-label="View photo ${i + 1} of ${photos.length}">
+          <img src="${esc(p.thumb)}" alt="">${p.id === unit.cover_id ? '<span class="cover-tag">Cover</span>' : ''}
+        </button>`).join('')}</div>`
+        : '<p class="muted small gallery-empty-text">No photos yet. Add photos so everyone can see the unit’s condition.</p>'}`;
 
-      box.querySelectorAll('[data-photo]').forEach((b) => b.addEventListener('click', () => {
-        selected = photos.find((p) => p.id === b.dataset.photo);
-        draw();
-      }));
-      const open = box.querySelector('#photo-open');
-      if (open) open.addEventListener('click', () => openLightbox(selected.data, unitName(unit)));
+    box.querySelectorAll('[data-index]').forEach((b) => b.addEventListener('click', () =>
+      openPhotoViewer(unit, photos, Number(b.dataset.index))));
 
-      const input = box.querySelector('#photo-input');
-      if (input) input.addEventListener('change', async () => {
-        if (!input.files.length) return;
-        input.disabled = true;
-        try {
-          const n = await uploadPhotos(unit.id, input.files, Boolean(unit.cover_id), photos.length);
-          toast(`${plural(n, 'photo')} added.`);
-          await route();
-        } catch (err) {
-          toast(friendlyError(err), 'err');
-          await route();
-        }
-      });
-
-      const cover = box.querySelector('#photo-cover');
-      if (cover) cover.addEventListener('click', () => busy(cover, async () => {
-        try {
-          await api.setCover(unit.id, selected);
-          toast('Cover photo set.');
-          await route();
-        } catch (err) { toast(friendlyError(err), 'err'); }
-      }));
-
-      const del = box.querySelector('#photo-delete');
-      if (del) del.addEventListener('click', () => {
-        if (!confirm('Delete this photo?')) return;
-        busy(del, async () => {
-          try {
-            const wasCover = selected.id === unit.cover_id;
-            const next = photos.find((p) => p.id !== selected.id) || null;
-            await api.deletePhoto(unit.id, selected, next, wasCover);
-            toast('Photo deleted.');
-            await route();
-          } catch (err) { toast(friendlyError(err), 'err'); }
-        });
-      });
-    };
-    draw();
+    const input = box.querySelector('#photo-input');
+    if (input) input.addEventListener('change', async () => {
+      if (!input.files.length) return;
+      input.disabled = true;
+      try {
+        const n = await uploadPhotos(unit.id, input.files, Boolean(unit.cover_id), photos.length);
+        toast(`${plural(n, 'photo')} added.`);
+      } catch (err) {
+        toast(friendlyError(err), 'err');
+      }
+      await route();
+    });
   }
 
-  function openLightbox(src, name) {
-    let dlg = document.getElementById('lightbox');
-    if (!dlg) {
-      dlg = document.createElement('dialog');
-      dlg.id = 'lightbox';
-      dlg.className = 'lightbox';
-      dlg.innerHTML = '<button type="button" class="lightbox-close" aria-label="Close">×</button><img alt="">';
-      dlg.addEventListener('click', (e) => { if (e.target === dlg || e.target.closest('.lightbox-close')) dlg.close(); });
-      document.body.appendChild(dlg);
-    }
+  function openPhotoViewer(unit, photos, start) {
+    const old = document.getElementById('lightbox');
+    if (old) old.remove();
+    const dlg = document.createElement('dialog');
+    dlg.id = 'lightbox';
+    dlg.className = 'lightbox';
+    dlg.innerHTML = `
+      <div class="lb-bar">
+        <span class="lb-count" id="lb-count"></span>
+        <button type="button" class="lb-close" aria-label="Close">×</button>
+      </div>
+      <div class="lb-stage">
+        ${photos.length > 1 ? '<button type="button" class="lb-nav lb-prev" aria-label="Previous photo">‹</button>' : ''}
+        <img alt="">
+        ${photos.length > 1 ? '<button type="button" class="lb-nav lb-next" aria-label="Next photo">›</button>' : ''}
+      </div>
+      <div class="lb-actions">
+        <button type="button" class="btn-secondary" id="lb-cover">Set as cover</button>
+        <button type="button" class="btn-danger" id="lb-delete">Delete photo</button>
+      </div>`;
+    document.body.appendChild(dlg);
+
+    let i = start;
     const img = dlg.querySelector('img');
-    img.src = src;
-    img.alt = 'Photo of ' + name;
+    const coverBtn = dlg.querySelector('#lb-cover');
+    const show = () => {
+      const p = photos[i];
+      img.src = p.data;
+      img.alt = `Photo ${i + 1} of ${unitName(unit)}`;
+      dlg.querySelector('#lb-count').textContent = `${i + 1} / ${photos.length}${p.id === unit.cover_id ? ' · Cover' : ''}`;
+      coverBtn.hidden = p.id === unit.cover_id;
+    };
+    const step = (d) => { i = (i + d + photos.length) % photos.length; show(); };
+    const close = () => dlg.close();
+
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) close(); });
+    dlg.querySelector('.lb-close').addEventListener('click', close);
+    if (photos.length > 1) {
+      dlg.querySelector('.lb-prev').addEventListener('click', () => step(-1));
+      dlg.querySelector('.lb-next').addEventListener('click', () => step(1));
+      dlg.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') step(-1);
+        if (e.key === 'ArrowRight') step(1);
+      });
+    }
+
+    coverBtn.addEventListener('click', () => busy(coverBtn, async () => {
+      try {
+        await api.setCover(unit.id, photos[i]);
+        close();
+        toast('Cover photo set.');
+        await route();
+      } catch (err) { toast(friendlyError(err), 'err'); }
+    }));
+
+    const del = dlg.querySelector('#lb-delete');
+    del.addEventListener('click', () => {
+      if (!confirm('Delete this photo?')) return;
+      busy(del, async () => {
+        try {
+          const photo = photos[i];
+          const wasCover = photo.id === unit.cover_id;
+          const next = photos.find((p) => p.id !== photo.id) || null;
+          await api.deletePhoto(unit.id, photo, next, wasCover);
+          close();
+          toast('Photo deleted.');
+          await route();
+        } catch (err) { toast(friendlyError(err), 'err'); }
+      });
+    });
+
+    show();
     dlg.showModal();
   }
 
