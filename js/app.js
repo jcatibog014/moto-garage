@@ -266,7 +266,7 @@
     },
     async createUnit(values) {
       const ref = await fb.addDoc(unitsCol(), {
-        ...values, status: 'in_stock', total_expenses: 0, photo_count: 0, papers: {},
+        papers: {}, ...values, status: 'in_stock', total_expenses: 0, photo_count: 0,
         created_at: fb.serverTimestamp(), created_by: session.email,
       });
       return ref.id;
@@ -314,8 +314,6 @@
       return batch.commit();
     },
     setCover: (unitId, photo) => fb.updateDoc(unitRef(unitId), { thumb: photo.thumb, cover_id: photo.id }),
-    setPapers: (unitId, values) => fb.updateDoc(unitRef(unitId),
-      Object.fromEntries(Object.entries(values).map(([key, v]) => ['papers.' + key, v]))),
   };
 
   // Shrinks and saves photos one by one. `hasCover` says whether the unit already has a cover.
@@ -718,31 +716,48 @@
     owner_id: hasPaper(u, 'owner_id'),
   });
 
-  // Unsaved checklist edits per unit, so a re-render (e.g. after adding an expense) keeps them.
-  const paperDrafts = {};
-
-  function papersPanelHtml(unit) {
-    const draft = paperDrafts[unit.id];
-    const shown = draft || savedPapers(unit);
-    const orcr = shown.orcr || '';
-    return `<h2>Papers <span class="muted small" id="papers-count">${papersDone(unit)} of ${PAPERS.length} done</span></h2>
-      <ul class="checklist">
+  // Checklist controls for the add/edit form; saved with the rest of the unit.
+  function papersFieldsHtml(papers) {
+    const orcr = papers.orcr || '';
+    return `<ul class="checklist">
         <li class="orcr-row">
           <span class="orcr-label" id="orcr-label">OR/CR</span>
           <div class="choice" role="radiogroup" aria-labelledby="orcr-label">
             ${Object.entries({ '': 'Not yet', ...ORCR }).map(([value, label]) => `<label>
-              <input type="radio" name="orcr" value="${value}" data-paper="orcr"${orcr === value ? ' checked' : ''}>
+              <input type="radio" name="orcr" value="${value}"${orcr === value ? ' checked' : ''}>
               <span>${label}</span></label>`).join('')}
           </div>
         </li>
         ${PAPERS.filter(([key]) => key !== 'orcr').map(([key, label]) => `<li><label>
-          <input type="checkbox" data-paper="${key}"${shown[key] ? ' checked' : ''}>
+          <input type="checkbox" name="${key}" data-paper="${key}"${papers[key] ? ' checked' : ''}>
           <span>${esc(label)}</span></label></li>`).join('')}
+      </ul>`;
+  }
+
+  const readPapers = (form) => ({
+    orcr: (form.querySelector('input[name=orcr]:checked') || {}).value || null,
+    deed: form.elements.deed.checked,
+    owner_id: form.elements.owner_id.checked,
+  });
+
+  // Set by "Update papers" so the edit form opens scrolled to the Papers section.
+  let focusPapersFor = null;
+
+  // Read-only summary on the unit page; papers are changed in the edit form.
+  function papersPanelHtml(unit) {
+    const p = savedPapers(unit);
+    return `<h2>Papers <span class="muted small" id="papers-count">${papersDone(unit)} of ${PAPERS.length} done</span></h2>
+      <ul class="paper-status">
+        ${PAPERS.map(([key, label]) => {
+          const ok = hasPaper(unit, key);
+          const value = key === 'orcr' ? (ORCR[p.orcr] || 'Not yet') : (ok ? 'Yes' : 'Not yet');
+          return `<li class="${ok ? 'ok' : 'missing'}">
+            <span class="mark" aria-hidden="true">${ok ? '✓' : '–'}</span>
+            <span class="paper-name">${esc(label)}</span>
+            <span class="paper-value">${value}</span></li>`;
+        }).join('')}
       </ul>
-      <div class="papers-actions">
-        <button class="btn" type="button" id="papers-save"${draft ? '' : ' disabled'}>Save papers</button>
-        <span class="unsaved" id="papers-status" aria-live="polite">${draft ? 'Unsaved changes' : ''}</span>
-      </div>`;
+      <a class="btn-secondary" href="#/units/${unit.id}/edit" id="update-papers">Update papers</a>`;
   }
 
   async function renderUnitDetail(id, token) {
@@ -925,41 +940,7 @@
       });
     }
 
-    // Papers checklist: edits stay local until "Save papers".
-    const papersPanel = view.querySelector('#papers-panel');
-    const papersSave = papersPanel.querySelector('#papers-save');
-    const papersStatus = papersPanel.querySelector('#papers-status');
-    const readPapers = () => ({
-      orcr: papersPanel.querySelector('input[name=orcr]:checked').value || null,
-      deed: papersPanel.querySelector('[data-paper=deed]').checked,
-      owner_id: papersPanel.querySelector('[data-paper=owner_id]').checked,
-    });
-    const papersDirty = () => JSON.stringify(readPapers()) !== JSON.stringify(savedPapers(unit));
-    const showPapersState = () => {
-      const dirty = papersDirty();
-      if (dirty) paperDrafts[unit.id] = readPapers(); else delete paperDrafts[unit.id];
-      papersSave.disabled = !dirty;
-      papersStatus.textContent = dirty ? 'Unsaved changes' : '';
-    };
-    papersPanel.addEventListener('change', showPapersState);
-    papersSave.addEventListener('click', async () => {
-      const values = readPapers();
-      papersSave.disabled = true;
-      papersStatus.textContent = 'Saving…';
-      try {
-        await api.setPapers(unit.id, values);
-        unit.papers = { ...(unit.papers || {}), ...values };
-        delete paperDrafts[unit.id];
-        papersPanel.querySelector('#papers-count').textContent = `${papersDone(unit)} of ${PAPERS.length} done`;
-        toast('Papers saved.');
-      } catch (err) {
-        toast(friendlyError(err), 'err');
-      }
-      showPapersState();
-    });
-    leaveGuard = () => (paperDrafts[unit.id]
-      ? { message: 'You have unsaved changes to the papers. Leave without saving?', discard: () => { delete paperDrafts[unit.id]; } }
-      : null);
+    view.querySelector('#update-papers').addEventListener('click', () => { focusPapersFor = unit.id; });
 
     loadGallery(unit, token);
   }
@@ -1130,17 +1111,35 @@
             ${field('sold_to', 'Sold to', unit.sold_to, { wide: true })}
           </div>` : ''}
 
+        <h2 id="papers">Papers</h2>
+        ${papersFieldsHtml(id ? savedPapers(unit) : {})}
+
         ${field('notes', 'Notes', unit.notes, { textarea: true })}
 
         <div class="form-actions">
-          <button class="btn" type="submit">${id ? 'Save changes' : 'Add unit'}</button>
+          <button class="btn" type="submit">${id ? 'Save changes' : 'Save unit'}</button>
           <a class="btn-ghost" href="${back}">Cancel</a>
+          <span class="unsaved" id="form-status" aria-live="polite"></span>
         </div>
       </form>
     </div>`;
 
     const form = view.querySelector('#unit-form');
     let picked = [];
+
+    // Track unsaved changes so leaving the form asks first.
+    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string'));
+    const initial = snapshot();
+    const isDirty = () => snapshot() !== initial || picked.length > 0;
+    const status = form.querySelector('#form-status');
+    const showDirty = () => { status.textContent = isDirty() ? 'Unsaved changes' : ''; };
+    form.addEventListener('input', showDirty);
+    form.addEventListener('change', showDirty);
+    leaveGuard = () => (isDirty() ? { message: 'You have unsaved changes. Leave without saving?', discard() {} } : null);
+    if (focusPapersFor === id) {
+      focusPapersFor = null;
+      form.querySelector('#papers').scrollIntoView({ block: 'start' });
+    }
     const picker = form.querySelector('#new-photos');
     if (picker) {
       const previews = form.querySelector('#picker-previews');
@@ -1159,6 +1158,7 @@
         picked = picked.concat(Array.from(picker.files).filter((f) => /^image\//.test(f.type))).slice(0, MAX_PHOTOS);
         picker.value = '';
         drawPreviews();
+        showDirty();
       });
     }
 
@@ -1172,22 +1172,26 @@
       busy(form.querySelector('button[type=submit]'), async () => {
         try {
           const values = formValues(form);
+          PAPERS.forEach(([key]) => { delete values[key]; });
+          values.papers = { ...((unit && unit.papers) || {}), ...readPapers(form) };
           if (id) {
             await api.updateUnit(id, values);
+            leaveGuard = null;
             toast('Changes saved.');
             location.hash = '#/units/' + id;
           } else {
             const newId = await api.createUnit(values);
+            leaveGuard = null;
             if (picked.length) {
               try {
                 await uploadPhotos(newId, picked, false, 0);
               } catch (err) {
-                toast('Unit added, but a photo couldn’t be saved: ' + friendlyError(err), 'err');
+                toast('Unit saved, but a photo couldn’t be saved: ' + friendlyError(err), 'err');
                 location.hash = '#/units/' + newId;
                 return;
               }
             }
-            toast('Unit added. You can add its expenses now.');
+            toast('Unit saved. You can add its expenses now.');
             location.hash = '#/units/' + newId;
           }
         } catch (err) { toast(friendlyError(err), 'err'); }
