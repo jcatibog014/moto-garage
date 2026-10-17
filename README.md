@@ -6,6 +6,7 @@ A web app for a buy-and-sell business that tracks every motorcycle and car: what
 - **Units**: each unit's cover photo, search (brand, model, plate, buyer, engine/chassis no.), filters by type and status, plus an **Export CSV** button for Excel or backups.
 - **Unit page**: details and a compact row of up to 8 photo thumbnails side by side at the top (tap one to view it full screen, set the cover or delete it), a cost breakdown, expenses, **Sell now** or **Reserve with deposit** (with agreed price and the balance to collect), and a papers summary: OR/CR (original or xerox), Deed of Sale, and ID with Signature of the Owner. Unsold units with missing papers appear on the dashboard.
 - **Add / edit unit**: one form for all details, including photos (when adding) and papers, with a **Save** button pinned to the bottom of the screen. Leaving with unsaved changes asks first.
+- **Profile** (tap your initial in the top bar): business name, logo, contact number, email and address, shared by the team; the name and logo replace "Moto Garage" in the top bar. Also your own name and a Change password button.
 - **Reports**: profit by month (chart and table), average margin and days to sell, profit by type and by brand, the most and least profitable units, and where expenses go. You can view the last 12 months, a single year, or all time.
 
 - Amounts are in Philippine Pesos (₱). Works on phones and computers.

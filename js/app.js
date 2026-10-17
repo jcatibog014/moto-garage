@@ -228,6 +228,47 @@
     return toJpeg(img, 480, 0.62, 4 / 3);
   }
 
+  // ---------- Business branding ----------
+  // Business details live in settings/business (shared by the team). The name and logo are
+  // also cached in this browser so the login screen and first paint show them.
+
+  const MARK_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M8 22V10l8 7 8-7v12"/></svg>';
+  const BUSINESS_KEY = 'moto-business';
+  const DEFAULT_NAME = 'Moto Garage';
+  let business = { name: DEFAULT_NAME, logo: null };
+  try { Object.assign(business, JSON.parse(localStorage.getItem(BUSINESS_KEY) || '{}')); } catch (e) { /* storage blocked */ }
+
+  const logoHtml = (logo) => (logo ? `<img src="${esc(logo)}" alt="">` : MARK_SVG);
+  const businessName = () => business.name || DEFAULT_NAME;
+
+  function applyBranding() {
+    document.getElementById('brand-logo').innerHTML = logoHtml(business.logo);
+    document.getElementById('brand-name').textContent = businessName();
+    document.title = businessName();
+    try { localStorage.setItem(BUSINESS_KEY, JSON.stringify({ name: business.name, logo: business.logo })); } catch (e) { /* storage blocked */ }
+  }
+
+  const userName = () => (session && (session.displayName || (session.email || '').split('@')[0])) || '';
+
+  function updateAvatar() {
+    const name = userName();
+    document.getElementById('avatar').textContent = (name.trim()[0] || '?').toUpperCase();
+    document.getElementById('avatar-name').textContent = name;
+  }
+
+  // Logos keep transparency (PNG) at up to 256px; very large ones fall back to JPEG.
+  async function processLogo(file) {
+    if (!/^image\//.test(file.type)) throw new Error(`“${file.name}” isn’t an image.`);
+    const img = await loadImage(file);
+    const scale = Math.min(1, 256 / Math.max(img.width, img.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const png = canvas.toDataURL('image/png');
+    return png.length < 300000 ? png : toJpeg(img, 256, 0.85);
+  }
+
   const unitThumb = (u, large) => (u.thumb
     ? `<span class="unit-icon photo${large ? ' lg' : ''}"><img src="${esc(u.thumb)}" alt=""></span>`
     : `<span class="unit-icon${large ? ' lg' : ''}">${ICONS[u.type]}</span>`);
@@ -364,6 +405,21 @@
     return list.length;
   }
 
+  api.getBusiness = async () => {
+    const snap = await fb.getDoc(fb.doc(db, 'settings', 'business'));
+    return snap.exists() ? snap.data() : {};
+  };
+  api.saveBusiness = (values) => fb.setDoc(fb.doc(db, 'settings', 'business'),
+    { ...values, updated_at: fb.serverTimestamp(), updated_by: session.email }, { merge: true });
+
+  let businessLoaded = Promise.resolve();
+  function loadBusiness() {
+    businessLoaded = api.getBusiness()
+      .then((data) => { business = { name: DEFAULT_NAME, logo: null, ...data }; applyBranding(); })
+      .catch((err) => console.warn('Business details not loaded', err));
+    return businessLoaded;
+  }
+
   const loadUnits = () => api.listUnits();
 
   // ---------- Router ----------
@@ -381,7 +437,9 @@
     showChrome(true);
 
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
-    const nav = !parts.length ? 'dashboard' : parts[0] === 'reports' ? 'reports' : parts[1] === 'new' ? 'new' : 'units';
+    const nav = !parts.length ? 'dashboard'
+      : parts[0] === 'reports' || parts[0] === 'profile' ? parts[0]
+      : parts[1] === 'new' ? 'new' : 'units';
     document.querySelectorAll('[data-nav]').forEach((a) => {
       if (a.dataset.nav === nav) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
@@ -391,6 +449,7 @@
     try {
       if (!parts.length) await renderDashboard(token);
       else if (parts[0] === 'reports') await renderReports(token);
+      else if (parts[0] === 'profile') await renderProfile(token);
       else if (parts[0] !== 'units') location.hash = '#/';
       else if (parts.length === 1) await renderUnits(token);
       else if (parts[1] === 'new') await renderUnitForm(null, token);
@@ -436,8 +495,8 @@
 
   function brandMark() {
     return `<div class="auth-brand">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M8 22V10l8 7 8-7v12"/></svg>
-      <span>Moto Garage</span></div>`;
+      <span class="auth-logo">${logoHtml(business.logo)}</span>
+      <span>${esc(businessName())}</span></div>`;
   }
 
   function renderLogin() {
@@ -1598,6 +1657,108 @@
     view.querySelector('#r-period').addEventListener('change', (e) => { reportState.period = e.target.value; draw(); });
   }
 
+  // ---------- Profile ----------
+
+  async function renderProfile(token) {
+    await businessLoaded;
+    if (stale(token)) return;
+    let logo = business.logo || null;
+
+    view.innerHTML = `<div class="page narrow">
+      <div class="page-head"><h1>Profile</h1></div>
+      <form id="profile-form" class="panel form" novalidate>
+        <h2 class="first">Business</h2>
+        <p class="muted small form-note">Shared with everyone on your team. The name and logo appear in the top bar.</p>
+        <div class="logo-field">
+          <span class="logo-preview" id="logo-preview">${logoHtml(logo)}</span>
+          <div class="logo-actions">
+            <label class="btn-secondary file-btn">${ICONS.camera} <span id="logo-label">${logo ? 'Change logo' : 'Upload logo'}</span>
+              <input type="file" accept="image/*" id="logo-input">
+            </label>
+            <button type="button" class="btn-ghost danger" id="logo-remove"${logo ? '' : ' hidden'}>Remove logo</button>
+            <p class="muted small">A square image works best.</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          ${field('business_name', 'Business name', business.name || DEFAULT_NAME, { required: true, wide: true })}
+          ${field('business_phone', 'Contact number', business.phone, { type: 'tel', attrs: 'autocomplete="tel" placeholder="e.g. 0917 123 4567"' })}
+          ${field('business_email', 'Business email', business.email, { type: 'email', attrs: 'autocomplete="email"' })}
+          ${field('business_address', 'Address', business.address, { wide: true, attrs: 'placeholder="e.g. Brgy. San Isidro, Malolos, Bulacan"' })}
+        </div>
+
+        <h2>Your account</h2>
+        <div class="grid-2">
+          ${field('display_name', 'Your name', session.displayName || '', { attrs: 'autocomplete="name"' })}
+          <div class="field"><span class="label-like">Email</span><p class="readonly">${esc(session.email)}</p></div>
+        </div>
+        <div class="account-actions">
+          <button type="button" class="btn-secondary" id="reset-password">Change password</button>
+          <p class="muted small">We’ll email you a link to set a new password.</p>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn" type="submit">Save changes</button>
+          <span class="unsaved" id="form-status" aria-live="polite"></span>
+        </div>
+      </form>
+    </div>`;
+
+    const form = view.querySelector('#profile-form');
+    const status = form.querySelector('#form-status');
+    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string')) + (logo || '');
+    const initial = snapshot();
+    const isDirty = () => snapshot() !== initial;
+    const showDirty = () => { status.textContent = isDirty() ? 'Unsaved changes' : ''; };
+    form.addEventListener('input', showDirty);
+    leaveGuard = () => (isDirty() ? { message: 'You have unsaved changes. Leave without saving?', discard() {} } : null);
+
+    const preview = form.querySelector('#logo-preview');
+    const removeBtn = form.querySelector('#logo-remove');
+    const showLogo = () => {
+      preview.innerHTML = logoHtml(logo);
+      removeBtn.hidden = !logo;
+      form.querySelector('#logo-label').textContent = logo ? 'Change logo' : 'Upload logo';
+      showDirty();
+    };
+    const logoInput = form.querySelector('#logo-input');
+    logoInput.addEventListener('change', async () => {
+      const file = logoInput.files[0];
+      logoInput.value = '';
+      if (!file) return;
+      try { logo = await processLogo(file); showLogo(); } catch (err) { toast(friendlyError(err), 'err'); }
+    });
+    removeBtn.addEventListener('click', () => { logo = null; showLogo(); });
+
+    const resetBtn = form.querySelector('#reset-password');
+    resetBtn.addEventListener('click', () => busy(resetBtn, async () => {
+      try {
+        await fb.sendPasswordResetEmail(auth, session.email);
+        toast(`Password reset link sent to ${session.email}. Check your inbox and spam.`);
+      } catch (err) { toast(friendlyError(err), 'err'); }
+    }));
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!validate(form)) return;
+      busy(form.querySelector('button[type=submit]'), async () => {
+        const v = formValues(form);
+        try {
+          const values = { name: v.business_name, phone: v.business_phone, email: v.business_email, address: v.business_address, logo };
+          await api.saveBusiness(values);
+          business = { ...business, ...values };
+          applyBranding();
+          if ((v.display_name || '') !== (session.displayName || '')) {
+            await fb.updateProfile(session, { displayName: v.display_name || null });
+            updateAvatar();
+          }
+          leaveGuard = null;
+          toast('Profile saved.');
+          await route();
+        } catch (err) { toast(friendlyError(err), 'err'); }
+      });
+    });
+  }
+
   // ---------- Start ----------
 
   // A page with unsaved edits sets leaveGuard to return { message, discard } while
@@ -1633,6 +1794,7 @@
       console.error(err);
       return renderSetup();
     }
+    applyBranding();
     const app = fb.initializeApp(cfg);
     auth = fb.getAuth(app);
     db = fb.getFirestore(app);
@@ -1642,6 +1804,7 @@
     fb.onAuthStateChanged(auth, (user) => {
       const changed = Boolean(user) !== Boolean(session);
       session = user;
+      if (user && (first || changed)) { updateAvatar(); loadBusiness(); }
       if (first || changed) route();
       first = false;
     });

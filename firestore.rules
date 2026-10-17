@@ -25,6 +25,11 @@ service cloud.firestore {
       }
     }
 
+    // Business name, logo and contact details shown in the app.
+    match /settings/{settingId} {
+      allow read, write: if isTeam();
+    }
+
     // The Reports page reads every unit's expenses in one collection group query.
     match /{path=**}/expenses/{expenseId} {
       allow read: if isTeam();

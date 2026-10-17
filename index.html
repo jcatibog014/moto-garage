@@ -10,21 +10,24 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css?v=10">
+  <link rel="stylesheet" href="css/styles.css?v=11">
 </head>
 <body>
   <header class="topbar" id="topbar" hidden>
     <div class="topbar-inner">
       <a class="brand" href="#/">
-        <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M8 22V10l8 7 8-7v12"/></svg>
-        <span>Moto Garage</span>
+        <span class="brand-logo" id="brand-logo"><svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M8 22V10l8 7 8-7v12"/></svg></span>
+        <span class="brand-name" id="brand-name">Moto Garage</span>
       </a>
       <nav class="tabs" aria-label="Main">
         <a href="#/" data-nav="dashboard">Dashboard</a>
         <a href="#/units" data-nav="units">Units</a>
         <a href="#/reports" data-nav="reports">Reports</a>
       </nav>
-      <a href="#/units/new" data-nav="new" class="btn tab-add">+ Add unit</a>
+      <a class="avatar-link" href="#/profile" data-nav="profile" aria-label="Profile">
+        <span class="avatar" id="avatar" aria-hidden="true"></span>
+        <span class="avatar-name" id="avatar-name"></span>
+      </a>
       <button class="btn-ghost logout" id="logout" type="button">Log out</button>
     </div>
   </header>
@@ -55,7 +58,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="js/config.js?v=10"></script>
-  <script src="js/app.js?v=10"></script>
+  <script src="js/config.js?v=11"></script>
+  <script src="js/app.js?v=11"></script>
 </body>
 </html>

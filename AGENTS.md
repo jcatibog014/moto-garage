@@ -20,6 +20,7 @@ Moto Garage is a unit tracker for a motorcycle and car buy-and-sell business. It
 - The Reports page reads every expense with a `collectionGroup('expenses')` query, which `firestore.rules` allows separately. Its chart is a hand-built SVG in `drawProfitChart()`, which puts losses below the zero line and has a table view.
 - `summarize()` derives `total_cost`, `profit` and `days_in_stock`. Lists are fetched whole and sorted and filtered client-side, which is fine for a small dealer. No Firestore indexes are needed.
 - Form validation: `field()` renders an input plus `<p class="error" id="{name}-error">`. `validate(form, extra)` uses native validity and an optional `{ name: value => message }` map. `formValues()` converts the names in `NUMERIC` to numbers and blank values to `null`.
+- Business name, logo (PNG data URL, max 256px), phone, email and address live in `settings/business` (`api.getBusiness`/`saveBusiness`), edited on the Profile page (`#/profile`, `renderProfile()`). `applyBranding()` puts the name and logo in the top bar and tab title and caches them in localStorage for the login screen. The user's own name is the Firebase Auth `displayName`, shown in the header avatar (`updateAvatar()`).
 - Access control is the email allowlist in `firestore.rules`. When adding an email, create that Auth user at the same time, so no one else can register the address first.
 
 ## Conventions

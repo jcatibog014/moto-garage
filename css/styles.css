@@ -82,14 +82,21 @@ code { font-size: 0.9em; background: var(--bg); padding: 1px 6px; border-radius:
   gap: 12px;
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; margin-right: auto; color: var(--ink); text-decoration: none; font-weight: 800; letter-spacing: -0.02em; font-size: 1.1rem; }
-.brand svg, .auth-brand svg { width: 32px; height: 32px; }
+.brand-logo, .auth-logo { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 10px; overflow: hidden; }
+.brand-logo img, .auth-logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+.brand svg, .auth-brand svg { width: 34px; height: 34px; }
 .brand svg rect, .auth-brand svg rect { fill: var(--accent); }
 .brand svg path, .auth-brand svg path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.topbar .logout { color: var(--muted); }
+.topbar .logout { color: var(--muted); padding: 0 12px; }
+.avatar-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 10px 4px 4px; border-radius: 999px; color: var(--ink); text-decoration: none; font-weight: 600; font-size: 0.92rem; }
+.avatar-link:hover, .avatar-link[aria-current="page"] { background: var(--accent-soft); color: var(--accent-strong); }
+.avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 0.95rem; }
+.avatar-name { display: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .logout:hover { color: var(--ink); }
 
-/* Top tabs and the Add button are for wider screens; phones use the bottom bar. */
-.tabs, .topbar .tab-add { display: none; }
+/* Top tabs are for wider screens; phones use the bottom bar. */
+.tabs { display: none; }
 .tabs { gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 999px; }
 .tabs a {
   color: var(--muted);
@@ -534,6 +541,23 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 .hbar-track { grid-area: track; height: 10px; background: var(--bg); border-radius: 999px; overflow: hidden; }
 .hbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; }
 
+/* ---------- Profile ---------- */
+
+.form h2.first { margin-top: 0; padding-top: 0; border-top: 0; }
+.form-note { margin: -6px 0 16px; }
+.logo-field { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 18px; }
+.logo-preview { display: grid; place-items: center; width: 88px; height: 88px; flex: none; border-radius: 20px; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); }
+.logo-preview img { width: 100%; height: 100%; object-fit: contain; }
+.logo-preview svg { width: 100%; height: 100%; }
+.logo-preview svg rect { fill: var(--accent); }
+.logo-preview svg path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.logo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.logo-actions .muted { flex-basis: 100%; margin: 2px 0 0; }
+.label-like { display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 5px; }
+.readonly { min-height: 44px; display: flex; align-items: center; margin: 0; padding: 0 12px; border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-2); overflow-wrap: anywhere; }
+.account-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 4px; }
+.account-actions .muted { margin: 0; }
+
 /* ---------- Toast ---------- */
 
 .toast {
@@ -584,9 +608,8 @@ body.has-bottom-nav .form-actions { bottom: calc(var(--bottom-nav-h) + var(--saf
 
 @media (min-width: 768px) {
   .topbar-inner { padding: 12px 24px; gap: 16px; }
-  .brand { margin-right: 8px; }
-  .tabs { display: flex; margin-right: auto; }
-  .topbar .tab-add { display: inline-flex; }
+  .tabs { display: flex; }
+  .avatar-name { display: inline; }
   .bottom-nav { display: none; }
   body.has-bottom-nav .container { padding-bottom: 64px; }
   body.has-bottom-nav .toast { bottom: 20px; }
