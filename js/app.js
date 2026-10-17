@@ -20,17 +20,15 @@
     commission: 'Commission / agent fee',
     other: 'Other',
   };
+  // Papers checklist. OR/CR records which copy we have; the others are yes/no.
+  const ORCR = { original: 'Original', xerox: 'Xerox' };
   const PAPERS = [
-    ['orcr', 'OR/CR received from seller'],
-    ['deed_in', 'Deed of sale from seller (notarized)'],
-    ['hpg', 'HPG clearance'],
-    ['deed_out', 'Deed of sale to buyer (notarized)'],
-    ['transfer', 'Transfer of ownership done (LTO)'],
+    ['orcr', 'OR/CR'],
+    ['deed', 'Deed of Sale'],
+    ['owner_id', 'ID with Signature of the Owner'],
   ];
   const NUMERIC = ['year', 'purchase_price', 'sale_price', 'amount', 'deposit', 'agreed_price'];
   const MAX_PHOTOS = 8;
-  // LTO expects the transfer to start within 20 working days of the sale (about 4 weeks).
-  const TRANSFER_WARN_DAYS = 21;
 
   const ICONS = {
     motorcycle: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="16" r="3.2"/><circle cx="19" cy="16" r="3.2"/><path d="M5 16l4-6h5l2.5 6M9 10L7.5 7H5.5M14 10l2-3h2.5"/></svg>',
@@ -215,7 +213,12 @@
 
   const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
   const millis = (ts) => (ts && ts.toMillis ? ts.toMillis() : 0);
-  const papersDone = (u) => PAPERS.filter(([key]) => u.papers && u.papers[key]).length;
+  const hasPaper = (u, key) => {
+    const v = u.papers && u.papers[key];
+    return key === 'orcr' ? Boolean(ORCR[v]) : v === true;
+  };
+  const papersDone = (u) => PAPERS.filter(([key]) => hasPaper(u, key)).length;
+  const papersMissing = (u) => PAPERS.filter(([key]) => !hasPaper(u, key)).map(([, label]) => label);
 
   // Adds the derived totals that the screens use.
   function summarize(id, d) {
@@ -495,20 +498,12 @@
     </div>`;
   }
 
-  // Units whose papers need chasing, most urgent first.
+  // Unsold units with papers still missing, longest in stock first.
   function papersFollowUp(units) {
-    const items = [];
-    units.forEach((u) => {
-      const p = u.papers || {};
-      if (u.status === 'sold' && !p.transfer) {
-        const days = daysBetween(u.sale_date, today());
-        items.push({ u, rank: 1000 + days, warn: days >= TRANSFER_WARN_DAYS,
-          meta: `Sold ${plural(days, 'day')} ago · transfer not done` });
-      } else if (u.status !== 'sold' && !p.orcr) {
-        items.push({ u, rank: u.days_in_stock, warn: false, meta: `No OR/CR yet · ${plural(u.days_in_stock, 'day')} in stock` });
-      }
-    });
-    return items.sort((a, b) => b.rank - a.rank);
+    return units
+      .filter((u) => u.status !== 'sold' && papersMissing(u).length)
+      .sort((a, b) => b.days_in_stock - a.days_in_stock)
+      .map((u) => ({ u, meta: 'Missing: ' + papersMissing(u).join(', ') }));
   }
 
   // ---------- Dashboard ----------
@@ -557,7 +552,7 @@
         <section class="panel attention">
           <h2>Papers to follow up</h2>
           <div class="unit-list">${followUp.map((f) => unitRow(f.u, {
-            meta: f.meta, warn: f.warn,
+            meta: f.meta, warn: true,
             figures: `<span class="meta">${papersDone(f.u)} of ${PAPERS.length} papers done</span>`,
           })).join('')}</div>
         </section>` : ''}
@@ -637,7 +632,11 @@
       ['Expenses', 'total_expenses'], ['Total cost', 'total_cost'], ['Status', (u) => STATUS[u.status]],
       ['Reserved by', 'reserved_by'], ['Reserved on', 'reserved_date'], ['Deposit', 'deposit'], ['Agreed price', 'agreed_price'],
       ['Sale date', 'sale_date'], ['Sale price', 'sale_price'], ['Sold to', 'sold_to'], ['Profit', 'profit'],
-      ['Days in stock', 'days_in_stock'], ['Papers done', (u) => `${papersDone(u)}/${PAPERS.length}`], ['Notes', 'notes'],
+      ['Days in stock', 'days_in_stock'],
+      ['OR/CR', (u) => ORCR[u.papers && u.papers.orcr] || ''],
+      ['Deed of Sale', (u) => (hasPaper(u, 'deed') ? 'Yes' : 'No')],
+      ['ID with Signature of the Owner', (u) => (hasPaper(u, 'owner_id') ? 'Yes' : 'No')],
+      ['Notes', 'notes'],
     ];
     const cell = (v) => {
       const s = v == null ? '' : String(v);
@@ -713,17 +712,19 @@
 
   function papersPanelHtml(unit) {
     const p = unit.papers || {};
-    const done = papersDone(unit);
-    let note = '';
-    if (unit.status === 'sold' && !p.transfer) {
-      const days = daysBetween(unit.sale_date, today());
-      note = `<p class="paper-note${days >= TRANSFER_WARN_DAYS ? ' warn' : ''}">Sold ${plural(days, 'day')} ago. LTO expects the transfer to start within 20 working days of the sale.</p>`;
-    }
-    return `<h2>Papers <span class="muted small" id="papers-count">${done} of ${PAPERS.length} done</span></h2>
-      ${note}
+    const orcr = ORCR[p.orcr] ? p.orcr : '';
+    return `<h2>Papers <span class="muted small" id="papers-count">${papersDone(unit)} of ${PAPERS.length} done</span></h2>
       <ul class="checklist">
-        ${PAPERS.map(([key, label]) => `<li><label>
-          <input type="checkbox" data-paper="${key}"${p[key] ? ' checked' : ''}>
+        <li class="orcr-row">
+          <span class="orcr-label" id="orcr-label">OR/CR</span>
+          <div class="choice" role="radiogroup" aria-labelledby="orcr-label">
+            ${Object.entries({ '': 'Not yet', ...ORCR }).map(([value, label]) => `<label>
+              <input type="radio" name="orcr" value="${value}" data-paper="orcr"${orcr === value ? ' checked' : ''}>
+              <span>${label}</span></label>`).join('')}
+          </div>
+        </li>
+        ${PAPERS.filter(([key]) => key !== 'orcr').map(([key, label]) => `<li><label>
+          <input type="checkbox" data-paper="${key}"${hasPaper(unit, key) ? ' checked' : ''}>
           <span>${esc(label)}</span></label></li>`).join('')}
       </ul>`;
   }
@@ -908,17 +909,23 @@
       });
     }
 
-    view.querySelectorAll('[data-paper]').forEach((box) => {
-      box.addEventListener('change', async () => {
-        box.disabled = true;
+    view.querySelectorAll('[data-paper]').forEach((input) => {
+      input.addEventListener('change', async () => {
+        const key = input.dataset.paper;
+        const value = input.type === 'radio' ? (input.value || null) : input.checked;
+        const previous = unit.papers ? unit.papers[key] : undefined;
+        const group = view.querySelectorAll(`[data-paper="${key}"]`);
+        group.forEach((el) => { el.disabled = true; });
         try {
-          await api.setPaper(unit.id, box.dataset.paper, box.checked);
-          unit.papers = { ...(unit.papers || {}), [box.dataset.paper]: box.checked };
+          await api.setPaper(unit.id, key, value);
+          unit.papers = { ...(unit.papers || {}), [key]: value };
           view.querySelector('#papers-count').textContent = `${papersDone(unit)} of ${PAPERS.length} done`;
         } catch (err) {
-          box.checked = !box.checked;
+          // Put the controls back the way they were.
+          if (input.type === 'radio') group.forEach((el) => { el.checked = el.value === (ORCR[previous] ? previous : ''); });
+          else input.checked = !input.checked;
           toast(friendlyError(err), 'err');
-        } finally { box.disabled = false; }
+        } finally { group.forEach((el) => { el.disabled = false; }); }
       });
     });
 
