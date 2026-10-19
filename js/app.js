@@ -330,7 +330,7 @@
     },
     async listAllExpenses() {
       const snap = await fb.getDocs(fb.collectionGroup(db, 'expenses'));
-      return snap.docs.map((d) => d.data());
+      return snap.docs.map((d) => ({ ...d.data(), unit_id: d.ref.parent && d.ref.parent.parent ? d.ref.parent.parent.id : null }));
     },
     async listPhotos(unitId) {
       const snap = await fb.getDocs(photosCol(unitId));
@@ -420,6 +420,65 @@
     return businessLoaded;
   }
 
+  // ---------- Cash on hand ----------
+  // Money on hand is calculated, never typed in: the starting money in settings/cash plus every
+  // movement dated on or after its start date. Buying a unit and unit expenses take money out,
+  // deposits and sales bring it in, and manual "add money" / "take out" entries live in /cash.
+
+  api.getCashStart = async () => {
+    const snap = await fb.getDoc(fb.doc(db, 'settings', 'cash'));
+    return snap.exists() ? snap.data() : null;
+  };
+  api.setCashStart = (values) => fb.setDoc(fb.doc(db, 'settings', 'cash'),
+    { ...values, updated_at: fb.serverTimestamp(), updated_by: session.email });
+  api.listCash = async () => (await fb.getDocs(fb.collection(db, 'cash'))).docs.map((d) => ({ ...d.data(), id: d.id }));
+  api.addCash = (values) => fb.addDoc(fb.collection(db, 'cash'),
+    { ...values, created_at: fb.serverTimestamp(), created_by: session.email });
+  api.deleteCash = (id) => fb.deleteDoc(fb.doc(db, 'cash', id));
+
+  const loadCashParts = () => Promise.all([api.getCashStart(), api.listCash(), api.listAllExpenses()]);
+
+  function cashLedger(start, units, expenses, moves) {
+    if (!start) return { start: null, balance: null, entries: [] };
+    const names = new Map(units.map((u) => [u.id, unitName(u)]));
+    const events = [];
+    units.forEach((u) => {
+      const name = unitName(u);
+      const href = '#/units/' + u.id;
+      events.push({ date: u.purchase_date, amount: -u.purchase_price, label: 'Bought ' + name, href, order: 1 });
+      const deposit = u.reserved_by && u.deposit && u.reserved_date ? u.deposit : 0;
+      if (deposit) events.push({ date: u.reserved_date, amount: deposit, label: `Deposit for ${name} · ${u.reserved_by}`, href, order: 3 });
+      if (u.status === 'sold') {
+        events.push({ date: u.sale_date, amount: u.sale_price - deposit, label: `Sold ${name}${deposit ? ' (balance after deposit)' : ''}`, href, order: 4 });
+      }
+    });
+    expenses.forEach((e) => events.push({
+      date: e.date, amount: -e.amount, order: 2,
+      label: `${CATEGORIES[e.category] || e.category} · ${names.get(e.unit_id) || 'unit'}${e.description ? ' · ' + e.description : ''}`,
+      href: e.unit_id ? '#/units/' + e.unit_id : null,
+    }));
+    moves.forEach((m) => events.push({
+      date: m.date, amount: m.type === 'in' ? m.amount : -m.amount, order: 5, id: m.id, created: millis(m.created_at),
+      label: m.note || (m.type === 'in' ? 'Money added' : 'Money taken out'),
+    }));
+    const entries = events
+      .filter((e) => e.date >= start.as_of)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order || (a.created || 0) - (b.created || 0));
+    let balance = round2(start.amount);
+    entries.forEach((e) => { balance = round2(balance + e.amount); e.balance = balance; });
+    return { start, balance, entries };
+  }
+
+  // Money in and out during the current month.
+  function cashThisMonth(cash) {
+    const month = today().slice(0, 7);
+    const list = cash.entries.filter((e) => e.date.startsWith(month));
+    return {
+      in: round2(sum(list.filter((e) => e.amount > 0), 'amount')),
+      out: round2(-sum(list.filter((e) => e.amount < 0), 'amount')),
+    };
+  }
+
   const loadUnits = () => api.listUnits();
 
   // ---------- Router ----------
@@ -438,7 +497,7 @@
 
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
     const nav = !parts.length ? 'dashboard'
-      : parts[0] === 'reports' || parts[0] === 'profile' ? parts[0]
+      : ['reports', 'profile', 'cash'].includes(parts[0]) ? parts[0]
       : parts[1] === 'new' ? 'new' : 'units';
     document.querySelectorAll('[data-nav]').forEach((a) => {
       if (a.dataset.nav === nav) a.setAttribute('aria-current', 'page');
@@ -450,6 +509,7 @@
       if (!parts.length) await renderDashboard(token);
       else if (parts[0] === 'reports') await renderReports(token);
       else if (parts[0] === 'profile') await renderProfile(token);
+      else if (parts[0] === 'cash') await renderCash(token);
       else if (parts[0] !== 'units') location.hash = '#/';
       else if (parts.length === 1) await renderUnits(token);
       else if (parts[1] === 'new') await renderUnitForm(null, token);
@@ -667,8 +727,9 @@
   // ---------- Dashboard ----------
 
   async function renderDashboard(token) {
-    const units = await loadUnits();
+    const [units, [cashStart, cashMoves, allExpenses]] = await Promise.all([loadUnits(), loadCashParts()]);
     if (stale(token)) return;
+    const cash = cashLedger(cashStart, units, allExpenses, cashMoves);
 
     if (!units.length) {
       view.innerHTML = `<div class="page"><div class="panel empty">
@@ -699,6 +760,19 @@
     view.innerHTML = `<div class="page">
       <div class="page-head"><h1>Dashboard</h1></div>
       <div class="stats bento">
+        ${cash.start ? (() => {
+          const m = cashThisMonth(cash);
+          return `<a class="stat hero cash-hero" href="#/cash">
+            <span class="stat-label">Money on hand</span>
+            <span class="stat-value ${cash.balance < 0 ? 'neg' : ''}">${money(cash.balance)}</span>
+            <span class="stat-sub">This month: <b class="pos">+${money(m.in)}</b> in · <b class="neg">−${money(m.out)}</b> out</span>
+            <span class="stat-sub">Counting from ${fmtDate(cash.start.as_of)}, starting with ${money(cash.start.amount)}</span>
+          </a>`;
+        })() : `<div class="stat hero cash-hero">
+            <span class="stat-label">Money on hand</span>
+            <p class="cash-setup">Enter how much money the business has now. Buying units and adding expenses will subtract from it, and deposits and sales will add to it.</p>
+            <a class="btn" href="#/cash">Set starting money</a>
+          </div>`}
         <a class="stat hero" href="#/reports">
           <span class="stat-label">Profit in ${monthName}</span>
           <span class="stat-value ${profitClass(monthProfit)}">${signed(monthProfit)}</span>
@@ -1309,6 +1383,7 @@
           ${field('purchase_date', 'Date bought', unit.purchase_date, { type: 'date', required: true })}
           ${field('bought_from', 'Bought from', unit.bought_from, { wide: true, attrs: 'placeholder="Seller’s name (optional)"' })}
         </div>
+        ${id ? '' : '<p class="preview cash-preview" id="cash-preview" aria-live="polite" hidden></p>'}
 
         ${showReservation ? `
           <h2>Reservation</h2>
@@ -1347,6 +1422,34 @@
     const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string'));
     const initial = snapshot();
     const isDirty = () => snapshot() !== initial || picked.length > 0;
+
+    // New units: show money on hand before and after this purchase.
+    const cashPreview = form.querySelector('#cash-preview');
+    if (cashPreview) {
+      let cashNow = null;
+      const showCash = () => {
+        if (!cashNow || !cashNow.start) return;
+        const price = Number(form.elements.purchase_price.value) || 0;
+        const date = form.elements.purchase_date.value;
+        cashPreview.hidden = false;
+        if (date && date < cashNow.start.as_of) {
+          cashPreview.className = 'preview cash-preview muted';
+          cashPreview.textContent = `Bought before ${fmtDate(cashNow.start.as_of)}, when you started counting money on hand, so it won’t change it.`;
+          return;
+        }
+        const after = round2(cashNow.balance - price);
+        cashPreview.className = 'preview cash-preview' + (after < 0 ? ' neg' : '');
+        cashPreview.textContent = `Money on hand: ${money(cashNow.balance)} → after buying: ${money(after)}` +
+          (after < 0 ? '. Not enough money on hand.' : '');
+      };
+      Promise.all([loadUnits(), loadCashParts()]).then(([us, [st, mv, ex]]) => {
+        if (stale(token)) return;
+        cashNow = cashLedger(st, us, ex, mv);
+        showCash();
+      }).catch((err) => console.warn('Money on hand not loaded', err));
+      form.elements.purchase_price.addEventListener('input', showCash);
+      form.elements.purchase_date.addEventListener('input', showCash);
+    }
     const status = form.querySelector('#form-status');
     const showDirty = () => { status.textContent = isDirty() ? 'Unsaved changes' : ''; };
     form.addEventListener('input', showDirty);
@@ -1655,6 +1758,141 @@
     };
     draw();
     view.querySelector('#r-period').addEventListener('change', (e) => { reportState.period = e.target.value; draw(); });
+  }
+
+  // ---------- Cash page ----------
+
+  async function renderCash(token) {
+    const [units, [start, moves, expenses]] = await Promise.all([loadUnits(), loadCashParts()]);
+    if (stale(token)) return;
+    const cash = cashLedger(start, units, expenses, moves);
+    const m = start ? cashThisMonth(cash) : null;
+
+    view.innerHTML = `<div class="page narrow">
+      <div class="page-head"><h1>Cash</h1></div>
+      ${start ? `
+        <section class="panel cash-balance">
+          <span class="stat-label">Money on hand</span>
+          <span class="cash-amount ${cash.balance < 0 ? 'neg' : ''}">${money(cash.balance)}</span>
+          <div class="cash-month">
+            <span>This month</span>
+            <span class="pos">+${money(m.in)} in</span>
+            <span class="neg">−${money(m.out)} out</span>
+          </div>
+          <div class="toggle" role="group" aria-label="Add or take out money">
+            <button type="button" class="toggle-btn" data-move="in" aria-pressed="true">Add money</button>
+            <button type="button" class="toggle-btn" data-move="out" aria-pressed="false">Take out money</button>
+          </div>
+          <form id="move-form" novalidate>
+            <input type="hidden" name="type" value="in">
+            <div class="grid-2">
+              ${field('amount', 'Amount (₱)', '', { type: 'number', required: true, attrs: MONEY_ATTRS })}
+              ${field('date', 'Date', today(), { type: 'date', required: true })}
+              ${field('note', 'Note', '', { wide: true, attrs: 'placeholder="e.g. Capital from partner"' })}
+            </div>
+            <button class="btn" type="submit" id="move-submit">Add money</button>
+          </form>
+        </section>` : ''}
+
+      <section class="panel" id="start-panel"${start ? ' hidden' : ''}>
+        <h2>${start ? 'Change starting money' : 'Set your starting money'}</h2>
+        <p class="muted small form-note">Count the money the business has (cash and bank) on the date below. From that date on, buying a unit or adding an expense subtracts from it, and deposits and sales add to it.</p>
+        <form id="start-form" novalidate>
+          <div class="grid-2">
+            ${field('start_amount', 'Starting money (₱)', start ? start.amount : '', { type: 'number', required: true, attrs: MONEY_ATTRS })}
+            ${field('as_of', 'Counting from', start ? start.as_of : today(), { type: 'date', required: true })}
+          </div>
+          <div class="actions">
+            <button class="btn" type="submit">Save starting money</button>
+            ${start ? '<button class="btn-ghost" type="button" id="start-cancel">Cancel</button>' : ''}
+          </div>
+        </form>
+      </section>
+
+      ${start ? `
+        <section class="panel">
+          <h2>History</h2>
+          <ul class="cash-list">
+            ${cash.entries.slice().reverse().map((e) => `<li class="cash-row">
+              <span class="cash-sign ${e.amount < 0 ? 'out' : 'in'}" aria-hidden="true">${e.amount < 0 ? '−' : '+'}</span>
+              <span class="cash-main">
+                ${e.href ? `<a href="${e.href}">${esc(e.label)}</a>` : `<strong>${esc(e.label)}</strong>`}
+                <span class="meta">${fmtDate(e.date)}</span>
+              </span>
+              <span class="cash-figs">
+                <span class="fig ${e.amount < 0 ? 'neg' : 'pos'}">${e.amount < 0 ? '−' : '+'}${money(Math.abs(e.amount))}</span>
+                <span class="meta">${money(e.balance)}</span>
+              </span>
+              ${e.id ? `<button class="icon-btn" type="button" data-delete-move="${e.id}" aria-label="Delete ${esc(e.label)}">×</button>` : '<span></span>'}
+            </li>`).join('')}
+            <li class="cash-row start-row">
+              <span class="cash-sign in" aria-hidden="true">●</span>
+              <span class="cash-main"><strong>Starting money</strong><span class="meta">${fmtDate(start.as_of)}</span></span>
+              <span class="cash-figs"><span class="fig">${money(start.amount)}</span></span>
+              <button class="link-btn" type="button" id="edit-start">Change</button>
+            </li>
+          </ul>
+        </section>` : ''}
+    </div>`;
+
+    const startPanel = view.querySelector('#start-panel');
+    const startForm = view.querySelector('#start-form');
+    startForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!validate(startForm)) return;
+      const v = formValues(startForm);
+      busy(startForm.querySelector('button[type=submit]'), async () => {
+        try {
+          await api.setCashStart({ amount: Number(v.start_amount), as_of: v.as_of });
+          toast('Starting money saved.');
+          await route();
+        } catch (err) { toast(friendlyError(err), 'err'); }
+      });
+    });
+    const editStart = view.querySelector('#edit-start');
+    if (editStart) editStart.addEventListener('click', () => {
+      startPanel.hidden = false;
+      startPanel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      startForm.elements.start_amount.focus({ preventScroll: true });
+    });
+    const cancelStart = view.querySelector('#start-cancel');
+    if (cancelStart) cancelStart.addEventListener('click', () => { startPanel.hidden = true; });
+
+    const moveForm = view.querySelector('#move-form');
+    if (moveForm) {
+      const submit = moveForm.querySelector('#move-submit');
+      view.querySelectorAll('[data-move]').forEach((b) => b.addEventListener('click', () => {
+        view.querySelectorAll('[data-move]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        moveForm.elements.type.value = b.dataset.move;
+        submit.textContent = b.dataset.move === 'in' ? 'Add money' : 'Take out money';
+        moveForm.elements.note.placeholder = b.dataset.move === 'in' ? 'e.g. Capital from partner' : 'e.g. Rent, allowance, salary';
+      }));
+      moveForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const ok = validate(moveForm, {
+          amount: (v) => (Number(v) <= 0 ? 'Enter an amount above zero.' : ''),
+          date: (v) => (v < start.as_of ? `Can’t be before ${fmtDate(start.as_of)}, when you started counting.` : ''),
+        });
+        if (!ok) return;
+        const v = formValues(moveForm);
+        busy(submit, async () => {
+          try {
+            await api.addCash({ type: v.type, amount: v.amount, date: v.date, note: v.note });
+            toast(v.type === 'in' ? 'Money added.' : 'Money taken out.');
+            await route();
+          } catch (err) { toast(friendlyError(err), 'err'); }
+        });
+      });
+    }
+
+    view.querySelectorAll('[data-delete-move]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Delete this entry? Money on hand will be recalculated.')) return;
+      try {
+        await api.deleteCash(b.dataset.deleteMove);
+        toast('Entry deleted.');
+        await route();
+      } catch (err) { toast(friendlyError(err), 'err'); }
+    }));
   }
 
   // ---------- Profile ----------
