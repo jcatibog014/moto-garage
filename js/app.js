@@ -229,23 +229,21 @@
   }
 
   // ---------- Business branding ----------
-  // Business details live in settings/business (shared by the team). The name and logo are
-  // also cached in this browser so the login screen and first paint show them.
+  // The ShiroMoto logo and app icons are fixed files in img/. Business details live in
+  // settings/business (shared by the team); the name is also cached in this browser so the
+  // login screen and first paint show it.
 
-  const MARK_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9"/><path d="M8 22V10l8 7 8-7v12"/></svg>';
   const BUSINESS_KEY = 'moto-business';
-  const DEFAULT_NAME = 'Moto Garage';
-  let business = { name: DEFAULT_NAME, logo: null };
+  const DEFAULT_NAME = 'ShiroMoto Garage';
+  let business = { name: DEFAULT_NAME };
   try { Object.assign(business, JSON.parse(localStorage.getItem(BUSINESS_KEY) || '{}')); } catch (e) { /* storage blocked */ }
 
-  const logoHtml = (logo) => (logo ? `<img src="${esc(logo)}" alt="">` : MARK_SVG);
   const businessName = () => business.name || DEFAULT_NAME;
 
   function applyBranding() {
-    document.getElementById('brand-logo').innerHTML = logoHtml(business.logo);
     document.getElementById('brand-name').textContent = businessName();
     document.title = businessName();
-    try { localStorage.setItem(BUSINESS_KEY, JSON.stringify({ name: business.name, logo: business.logo })); } catch (e) { /* storage blocked */ }
+    try { localStorage.setItem(BUSINESS_KEY, JSON.stringify({ name: business.name })); } catch (e) { /* storage blocked */ }
   }
 
   const userName = () => (session && (session.displayName || (session.email || '').split('@')[0])) || '';
@@ -254,19 +252,6 @@
     const name = userName();
     document.getElementById('avatar').textContent = (name.trim()[0] || '?').toUpperCase();
     document.getElementById('avatar-name').textContent = name;
-  }
-
-  // Logos keep transparency (PNG) at up to 256px; very large ones fall back to JPEG.
-  async function processLogo(file) {
-    if (!/^image\//.test(file.type)) throw new Error(`“${file.name}” isn’t an image.`);
-    const img = await loadImage(file);
-    const scale = Math.min(1, 256 / Math.max(img.width, img.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(img.width * scale));
-    canvas.height = Math.max(1, Math.round(img.height * scale));
-    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-    const png = canvas.toDataURL('image/png');
-    return png.length < 300000 ? png : toJpeg(img, 256, 0.85);
   }
 
   const unitThumb = (u, large) => (u.thumb
@@ -415,7 +400,7 @@
   let businessLoaded = Promise.resolve();
   function loadBusiness() {
     businessLoaded = api.getBusiness()
-      .then((data) => { business = { name: DEFAULT_NAME, logo: null, ...data }; applyBranding(); })
+      .then((data) => { business = { name: DEFAULT_NAME, ...data }; applyBranding(); })
       .catch((err) => console.warn('Business details not loaded', err));
     return businessLoaded;
   }
@@ -555,8 +540,7 @@
 
   function brandMark() {
     return `<div class="auth-brand">
-      <span class="auth-logo">${logoHtml(business.logo)}</span>
-      <span>${esc(businessName())}</span></div>`;
+      <img class="auth-logo" src="img/logo.png" alt="${esc(businessName())}" width="480" height="480"></div>`;
   }
 
   function renderLogin() {
@@ -1900,23 +1884,12 @@
   async function renderProfile(token) {
     await businessLoaded;
     if (stale(token)) return;
-    let logo = business.logo || null;
 
     view.innerHTML = `<div class="page narrow">
       <div class="page-head"><h1>Profile</h1></div>
       <form id="profile-form" class="panel form" novalidate>
         <h2 class="first">Business</h2>
-        <p class="muted small form-note">Shared with everyone on your team. The name and logo appear in the top bar.</p>
-        <div class="logo-field">
-          <span class="logo-preview" id="logo-preview">${logoHtml(logo)}</span>
-          <div class="logo-actions">
-            <label class="btn-secondary file-btn">${ICONS.camera} <span id="logo-label">${logo ? 'Change logo' : 'Upload logo'}</span>
-              <input type="file" accept="image/*" id="logo-input">
-            </label>
-            <button type="button" class="btn-ghost danger" id="logo-remove"${logo ? '' : ' hidden'}>Remove logo</button>
-            <p class="muted small">A square image works best.</p>
-          </div>
-        </div>
+        <p class="muted small form-note">Shared with everyone on your team. The name appears in the top bar.</p>
         <div class="grid-2">
           ${field('business_name', 'Business name', business.name || DEFAULT_NAME, { required: true, wide: true })}
           ${field('business_phone', 'Contact number', business.phone, { type: 'tel', attrs: 'autocomplete="tel" placeholder="e.g. 0917 123 4567"' })}
@@ -1943,29 +1916,12 @@
 
     const form = view.querySelector('#profile-form');
     const status = form.querySelector('#form-status');
-    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string')) + (logo || '');
+    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string'));
     const initial = snapshot();
     const isDirty = () => snapshot() !== initial;
     const showDirty = () => { status.textContent = isDirty() ? 'Unsaved changes' : ''; };
     form.addEventListener('input', showDirty);
     leaveGuard = () => (isDirty() ? { message: 'You have unsaved changes. Leave without saving?', discard() {} } : null);
-
-    const preview = form.querySelector('#logo-preview');
-    const removeBtn = form.querySelector('#logo-remove');
-    const showLogo = () => {
-      preview.innerHTML = logoHtml(logo);
-      removeBtn.hidden = !logo;
-      form.querySelector('#logo-label').textContent = logo ? 'Change logo' : 'Upload logo';
-      showDirty();
-    };
-    const logoInput = form.querySelector('#logo-input');
-    logoInput.addEventListener('change', async () => {
-      const file = logoInput.files[0];
-      logoInput.value = '';
-      if (!file) return;
-      try { logo = await processLogo(file); showLogo(); } catch (err) { toast(friendlyError(err), 'err'); }
-    });
-    removeBtn.addEventListener('click', () => { logo = null; showLogo(); });
 
     const resetBtn = form.querySelector('#reset-password');
     resetBtn.addEventListener('click', () => busy(resetBtn, async () => {
@@ -1981,7 +1937,7 @@
       busy(form.querySelector('button[type=submit]'), async () => {
         const v = formValues(form);
         try {
-          const values = { name: v.business_name, phone: v.business_phone, email: v.business_email, address: v.business_address, logo };
+          const values = { name: v.business_name, phone: v.business_phone, email: v.business_email, address: v.business_address };
           await api.saveBusiness(values);
           business = { ...business, ...values };
           applyBranding();
