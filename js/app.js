@@ -6,9 +6,10 @@
   const toastEl = document.getElementById('toast');
   const bottomNav = document.getElementById('bottom-nav');
 
-  // Top bar and phone bottom bar are hidden on the login and setup screens.
+  // On the login and setup screens the top bar shows only the brand and the phone bottom bar is hidden.
   function showChrome(on) {
-    topbar.hidden = !on;
+    topbar.hidden = false;
+    document.body.classList.toggle('guest', !on);
     bottomNav.hidden = !on;
     document.body.classList.toggle('has-bottom-nav', on);
   }
@@ -523,10 +524,10 @@
 
   function renderSetup() {
     showChrome(false);
+    document.getElementById('guest-login').hidden = true;
     const offline = configured && !fb;
-    view.innerHTML = `<div class="auth page"><div class="auth-card">
-      ${brandMark()}
-      <h1>${offline ? 'Can’t load the app' : 'Finish setting up'}</h1>
+    view.innerHTML = `<div class="auth page">${authHero()}<div class="auth-card">
+      <h2>${offline ? 'Can’t load the app' : 'Finish setting up'}</h2>
       ${offline
         ? '<p>Firebase didn’t load. Check your internet connection and refresh.</p>'
         : `<p>Connect the app to your Firebase project:</p>
@@ -538,25 +539,29 @@
     </div></div>`;
   }
 
-  function brandMark() {
-    return `<div class="auth-brand">
-      <img class="auth-logo" src="img/logo.png" alt="${esc(businessName())}" width="480" height="480"></div>`;
+  // App icon, name and tagline above the login and setup cards.
+  function authHero() {
+    return `<div class="auth-hero">
+      <img class="auth-icon" src="img/icon-512.png" alt="" width="512" height="512">
+      <h1>${esc(businessName())}</h1>
+      <p class="muted">Track your units, expenses and profit.</p></div>`;
   }
 
   function renderLogin() {
-    view.innerHTML = `<div class="auth page"><div class="auth-card">
-      ${brandMark()}
-      <h1>Log in</h1>
-      <p class="muted">Track your units, expenses and profit.</p>
+    document.getElementById('guest-login').hidden = false;
+    view.innerHTML = `<div class="auth page">${authHero()}<div class="auth-card">
+      <h2>Log in</h2>
       <form id="login-form" novalidate>
+        <p class="form-error" id="login-error" role="alert"></p>
         ${field('email', 'Email', '', { type: 'email', required: true, attrs: 'autocomplete="email"' })}
         ${field('password', 'Password', '', { type: 'password', required: true, attrs: 'autocomplete="current-password"' })}
-        <p class="form-error" id="login-error" role="alert"></p>
-        <button class="btn btn-block" type="submit">Log in</button>
+        <div class="auth-actions">
+          <button class="btn" type="submit">Log in</button>
+          <button class="link-btn forgot" type="button" id="forgot">Forgot password?</button>
+        </div>
       </form>
-      <button class="btn-ghost btn-block forgot" type="button" id="forgot">Forgot password?</button>
-      <p class="muted small">No account yet? Ask the owner to add you.</p>
-    </div></div>`;
+    </div>
+    <p class="auth-foot muted">No account yet? Ask the owner to add you.</p></div>`;
 
     const form = view.querySelector('#login-form');
     view.querySelector('#forgot').addEventListener('click', (e) => {
@@ -2006,6 +2011,11 @@
     document.getElementById('logout').addEventListener('click', async () => {
       await fb.signOut(auth);
       location.hash = '#/';
+    });
+    // The header Log in button on the login screen just moves to the email field.
+    document.getElementById('guest-login').addEventListener('click', (e) => {
+      const email = view.querySelector('#login-form [name=email]');
+      if (email) { e.preventDefault(); email.focus(); }
     });
   }
 
