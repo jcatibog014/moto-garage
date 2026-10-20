@@ -82,18 +82,19 @@ code { font-size: 0.9em; background: var(--bg); padding: 1px 6px; border-radius:
   gap: 12px;
 }
 .brand { display: inline-flex; align-items: center; gap: 10px; margin-right: auto; color: var(--ink); text-decoration: none; font-weight: 800; letter-spacing: -0.02em; font-size: 1.1rem; }
-.brand-logo, .auth-logo { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 10px; overflow: hidden; }
-.brand-logo img, .auth-logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.brand-logo { display: block; width: 38px; height: 38px; flex: none; border-radius: 10px; }
 .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
-.brand svg, .auth-brand svg { width: 34px; height: 34px; }
-.brand svg rect, .auth-brand svg rect { fill: var(--accent); }
-.brand svg path, .auth-brand svg path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .topbar .logout { color: var(--muted); padding: 0 12px; }
 .avatar-link { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 10px 4px 4px; border-radius: 999px; color: var(--ink); text-decoration: none; font-weight: 600; font-size: 0.92rem; }
 .avatar-link:hover, .avatar-link[aria-current="page"] { background: var(--accent-soft); color: var(--accent-strong); }
 .avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 800; font-size: 0.95rem; }
 .avatar-name { display: none; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .logout:hover { color: var(--ink); }
+/* Logged out, the top bar shows the brand and a Log in button. */
+.guest .tabs, .guest .avatar-link, .guest .logout { display: none; }
+.guest-login { display: none; }
+.topbar .guest-login { min-height: 40px; padding: 0 20px; border-radius: 999px; }
+.guest .guest-login:not([hidden]) { display: inline-flex; }
 
 /* Top tabs are for wider screens; phones use the bottom bar. */
 .tabs { display: none; }
@@ -410,12 +411,23 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 /* ---------- Login / setup ---------- */
 
-.auth { min-height: calc(100vh - 84px); display: grid; place-items: center; }
-.auth-card { width: 100%; max-width: 400px; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 28px 22px; box-shadow: var(--shadow); }
-.auth-card h1 { margin-bottom: 6px; }
-.auth-card form { margin-top: 18px; }
-.forgot { margin-top: 8px; font-size: 0.9rem; color: var(--muted); }
-.auth-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.1rem; margin-bottom: 22px; }
+.auth { display: flex; flex-direction: column; align-items: center; padding-top: 8px; }
+.auth-hero { text-align: center; margin-bottom: 24px; }
+.auth-icon { display: block; width: 108px; height: 108px; margin: 0 auto 14px; border-radius: 26px; box-shadow: var(--shadow-lift); }
+.auth-hero h1 { font-size: 1.6rem; }
+.auth-hero p { margin: 6px 0 0; }
+/* The accent bar across the top of the card is a 6px background strip. */
+.auth-card {
+  width: 100%; max-width: 470px; padding: 28px 22px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong)) top / 100% 6px no-repeat, var(--surface);
+  border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow-lift);
+}
+.auth-card h2 { font-size: 1.45rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 18px; }
+.auth-card .form-error { padding: 12px 16px; margin-bottom: 16px; border-radius: var(--radius-sm); background: var(--neg-soft); }
+.auth-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; }
+.auth-actions .btn { min-width: 120px; }
+.forgot { font-size: 0.9rem; }
+.auth-foot { margin: 18px 0 0; text-align: center; }
 .steps { padding-left: 20px; margin: 0 0 12px; }
 .steps li { margin-bottom: 8px; }
 
@@ -571,14 +583,6 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
 
 .form h2.first { margin-top: 0; padding-top: 0; border-top: 0; }
 .form-note { margin: -6px 0 16px; }
-.logo-field { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 18px; }
-.logo-preview { display: grid; place-items: center; width: 88px; height: 88px; flex: none; border-radius: 20px; overflow: hidden; background: #fff; border: 1px solid var(--line-strong); }
-.logo-preview img { width: 100%; height: 100%; object-fit: contain; }
-.logo-preview svg { width: 100%; height: 100%; }
-.logo-preview svg rect { fill: var(--accent); }
-.logo-preview svg path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
-.logo-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.logo-actions .muted { flex-basis: 100%; margin: 2px 0 0; }
 .label-like { display: block; font-weight: 600; font-size: 0.88rem; margin-bottom: 5px; }
 .readonly { min-height: 44px; display: flex; align-items: center; margin: 0; padding: 0 12px; border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-2); overflow-wrap: anywhere; }
 .account-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 4px; }
