@@ -12,6 +12,16 @@ A web app for a buy-and-sell business that tracks every motorcycle and car: what
 
 - Amounts are in Philippine Pesos (₱). Works on phones and computers.
 
+## Screenshots
+
+| Login (computer) | Login (phone) |
+| --- | --- |
+| <img src="docs/screenshots/login-desktop.png" alt="Login screen on a computer with the ShiroMoto Garage logo" width="520"> | <img src="docs/screenshots/login-phone.png" alt="Login screen on a phone with the ShiroMoto Garage logo" width="220"> |
+
+| Top bar | Home screen icon |
+| --- | --- |
+| <img src="docs/screenshots/topbar-brand.png" alt="Top bar with the scooter mark and the name ShiroMoto Garage" width="260"> | <img src="img/icon-192.png" alt="ShiroMoto app icon" width="96"> |
+
 Photos are shrunk in the browser (about 100–200 KB each) and saved in Firestore, because file storage needs the paid Blaze plan.
 
 Data is stored in **Firebase Firestore** on the free Spark plan (no credit card). Only team members listed in `firestore.rules` can log in and see the data.
