@@ -2,6 +2,8 @@
 
 A web app for a buy-and-sell business that tracks every motorcycle and car: what it was bought for and when, what was spent on it (transport, repair, parts, documents, cleaning), and what it sold for. It works out the total cost, profit and days in stock for each unit, and shows totals on a dashboard.
 
+<img src="docs/screenshots/dashboard.png" alt="ShiroMoto Garage dashboard (sample data)" width="820">
+
 - **Dashboard**: units in stock, money tied up in stock, profit this month, total profit, total sales, deposits held, papers to follow up, recent sales, and the units that have been in stock the longest.
 - **Units**: each unit's cover photo, search (brand, model, plate, buyer, engine/chassis no.), filters by type and status, plus an **Export CSV** button for Excel or backups.
 - **Unit page**: details and a compact row of up to 8 photo thumbnails side by side at the top (tap one to view it full screen, set the cover or delete it), a cost breakdown, expenses, **Sell now** or **Reserve with deposit** (with agreed price and the balance to collect), and a papers summary: OR/CR (original or xerox), Deed of Sale, and ID with Signature of the Owner. Unsold units with missing papers appear on the dashboard.
@@ -13,6 +15,20 @@ A web app for a buy-and-sell business that tracks every motorcycle and car: what
 - Amounts are in Philippine Pesos (₱). Works on phones and computers.
 
 ## Screenshots
+
+The screenshots (and the dashboard at the top) use sample data, not real units.
+
+| Units | Unit page |
+| --- | --- |
+| <img src="docs/screenshots/units.png" alt="Units page with a grid of units showing status, plate, price and days in stock" width="400"> | <img src="docs/screenshots/unit.png" alt="Unit page with details, photos, cost breakdown, expenses, sale form and papers" width="400"> |
+
+| Reports | Cash |
+| --- | --- |
+| <img src="docs/screenshots/reports.png" alt="Reports page with profit by month chart, profit by type and brand, most and least profitable units, and where expenses go" width="400"> | <img src="docs/screenshots/cash.png" alt="Cash page with money on hand, add or take out money, and a history with a running balance" width="400"> |
+
+| Dashboard (phone) | Units (phone) |
+| --- | --- |
+| <img src="docs/screenshots/dashboard-phone.png" alt="Dashboard on a phone with the bottom navigation bar" width="220"> | <img src="docs/screenshots/units-phone.png" alt="Units page on a phone in a two-column grid" width="220"> |
 
 | Login (computer) | Login (phone) |
 | --- | --- |
