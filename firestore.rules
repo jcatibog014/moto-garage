@@ -25,6 +25,16 @@ service cloud.firestore {
       }
     }
 
+    // Money added to or taken out of the business (the Cash page).
+    match /cash/{entryId} {
+      allow read, write: if isTeam();
+    }
+
+    // Business name, logo and contact details, and the starting money for Cash.
+    match /settings/{settingId} {
+      allow read, write: if isTeam();
+    }
+
     // The Reports page reads every unit's expenses in one collection group query.
     match /{path=**}/expenses/{expenseId} {
       allow read: if isTeam();

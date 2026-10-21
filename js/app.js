@@ -4,6 +4,23 @@
   const view = document.getElementById('view');
   const topbar = document.getElementById('topbar');
   const toastEl = document.getElementById('toast');
+  const bottomNav = document.getElementById('bottom-nav');
+
+  // On the login and setup screens the top bar shows only the brand and the phone bottom bar is hidden.
+  function showChrome(on) {
+    topbar.hidden = false;
+    document.body.classList.toggle('guest', !on);
+    bottomNav.hidden = !on;
+    document.body.classList.toggle('has-bottom-nav', on);
+  }
+
+  // Shown while a page loads, in place of "Loading…" text.
+  const skeleton = () => `<div class="page skeleton" aria-busy="true" aria-label="Loading">
+    <span class="sk sk-title"></span>
+    <span class="sk sk-hero"></span>
+    <div class="sk-row"><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span><span class="sk sk-tile"></span></div>
+    <span class="sk sk-block"></span>
+  </div>`;
 
   const FIREBASE_SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
   const cfg = (window.MOTO_CONFIG || {}).firebase || {};
@@ -173,11 +190,14 @@
     });
   }
 
-  function toJpeg(src, maxSide, quality, square) {
+  // Scales an image to fit maxSide, center-cropping to `aspect` (width / height) when given.
+  function toJpeg(src, maxSide, quality, aspect) {
     const w = src.width;
     const h = src.height;
     let sx = 0, sy = 0, sw = w, sh = h;
-    if (square) { const s = Math.min(w, h); sx = (w - s) / 2; sy = (h - s) / 2; sw = sh = s; }
+    if (aspect) {
+      if (w / h > aspect) { sw = h * aspect; sx = (w - sw) / 2; } else { sh = w / aspect; sy = (h - sh) / 2; }
+    }
     const scale = Math.min(1, maxSide / Math.max(sw, sh));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(sw * scale));
@@ -194,7 +214,45 @@
     const img = await loadImage(file);
     let data = toJpeg(img, 1280, 0.72);
     if (data.length > 650000) data = toJpeg(img, 1024, 0.6);
-    return { data, thumb: toJpeg(img, 128, 0.7, true) };
+    return { data, thumb: toJpeg(img, 128, 0.7, 1), card: toJpeg(img, 480, 0.62, 4 / 3) };
+  }
+
+  // The 4:3 card image of a photo; photos saved before cards existed get one made from the full photo.
+  async function cardFor(photo) {
+    if (photo.card) return photo.card;
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = photo.data;
+    });
+    return toJpeg(img, 480, 0.62, 4 / 3);
+  }
+
+  // ---------- Business branding ----------
+  // The ShiroMoto logo and app icons are fixed files in img/. Business details live in
+  // settings/business (shared by the team); the name is also cached in this browser so the
+  // login screen and first paint show it.
+
+  const BUSINESS_KEY = 'moto-business';
+  const DEFAULT_NAME = 'ShiroMoto Garage';
+  let business = { name: DEFAULT_NAME };
+  try { Object.assign(business, JSON.parse(localStorage.getItem(BUSINESS_KEY) || '{}')); } catch (e) { /* storage blocked */ }
+
+  const businessName = () => business.name || DEFAULT_NAME;
+
+  function applyBranding() {
+    document.getElementById('brand-name').textContent = businessName();
+    document.title = businessName();
+    try { localStorage.setItem(BUSINESS_KEY, JSON.stringify({ name: business.name })); } catch (e) { /* storage blocked */ }
+  }
+
+  const userName = () => (session && (session.displayName || (session.email || '').split('@')[0])) || '';
+
+  function updateAvatar() {
+    const name = userName();
+    document.getElementById('avatar').textContent = (name.trim()[0] || '?').toUpperCase();
+    document.getElementById('avatar-name').textContent = name;
   }
 
   const unitThumb = (u, large) => (u.thumb
@@ -258,7 +316,7 @@
     },
     async listAllExpenses() {
       const snap = await fb.getDocs(fb.collectionGroup(db, 'expenses'));
-      return snap.docs.map((d) => d.data());
+      return snap.docs.map((d) => ({ ...d.data(), unit_id: d.ref.parent && d.ref.parent.parent ? d.ref.parent.parent.id : null }));
     },
     async listPhotos(unitId) {
       const snap = await fb.getDocs(photosCol(unitId));
@@ -300,20 +358,24 @@
       const batch = fb.writeBatch(db);
       batch.set(ref, { ...photo, created_at: fb.serverTimestamp(), created_by: session.email });
       const patch = { photo_count: fb.increment(1) };
-      if (makeCover) Object.assign(patch, { thumb: photo.thumb, cover_id: ref.id });
+      if (makeCover) Object.assign(patch, { thumb: photo.thumb, card: photo.card || null, cover_id: ref.id });
       batch.update(unitRef(unitId), patch);
       await batch.commit();
       return ref.id;
     },
-    deletePhoto(unitId, photo, nextCover, wasCover) {
+    async deletePhoto(unitId, photo, nextCover, wasCover) {
+      const card = wasCover && nextCover ? await cardFor(nextCover).catch(() => null) : null;
       const batch = fb.writeBatch(db);
       batch.delete(fb.doc(db, 'units', unitId, 'photos', photo.id));
       const patch = { photo_count: fb.increment(-1) };
-      if (wasCover) Object.assign(patch, nextCover ? { thumb: nextCover.thumb, cover_id: nextCover.id } : { thumb: null, cover_id: null });
+      if (wasCover) Object.assign(patch, nextCover ? { thumb: nextCover.thumb, card, cover_id: nextCover.id } : { thumb: null, card: null, cover_id: null });
       batch.update(unitRef(unitId), patch);
       return batch.commit();
     },
-    setCover: (unitId, photo) => fb.updateDoc(unitRef(unitId), { thumb: photo.thumb, cover_id: photo.id }),
+    async setCover(unitId, photo) {
+      const card = await cardFor(photo).catch(() => null);
+      return fb.updateDoc(unitRef(unitId), { thumb: photo.thumb, card, cover_id: photo.id });
+    },
   };
 
   // Shrinks and saves photos one by one. `hasCover` says whether the unit already has a cover.
@@ -329,6 +391,80 @@
     return list.length;
   }
 
+  api.getBusiness = async () => {
+    const snap = await fb.getDoc(fb.doc(db, 'settings', 'business'));
+    return snap.exists() ? snap.data() : {};
+  };
+  api.saveBusiness = (values) => fb.setDoc(fb.doc(db, 'settings', 'business'),
+    { ...values, updated_at: fb.serverTimestamp(), updated_by: session.email }, { merge: true });
+
+  let businessLoaded = Promise.resolve();
+  function loadBusiness() {
+    businessLoaded = api.getBusiness()
+      .then((data) => { business = { name: DEFAULT_NAME, ...data }; applyBranding(); })
+      .catch((err) => console.warn('Business details not loaded', err));
+    return businessLoaded;
+  }
+
+  // ---------- Cash on hand ----------
+  // Money on hand is calculated, never typed in: the starting money in settings/cash plus every
+  // movement dated on or after its start date. Buying a unit and unit expenses take money out,
+  // deposits and sales bring it in, and manual "add money" / "take out" entries live in /cash.
+
+  api.getCashStart = async () => {
+    const snap = await fb.getDoc(fb.doc(db, 'settings', 'cash'));
+    return snap.exists() ? snap.data() : null;
+  };
+  api.setCashStart = (values) => fb.setDoc(fb.doc(db, 'settings', 'cash'),
+    { ...values, updated_at: fb.serverTimestamp(), updated_by: session.email });
+  api.listCash = async () => (await fb.getDocs(fb.collection(db, 'cash'))).docs.map((d) => ({ ...d.data(), id: d.id }));
+  api.addCash = (values) => fb.addDoc(fb.collection(db, 'cash'),
+    { ...values, created_at: fb.serverTimestamp(), created_by: session.email });
+  api.deleteCash = (id) => fb.deleteDoc(fb.doc(db, 'cash', id));
+
+  const loadCashParts = () => Promise.all([api.getCashStart(), api.listCash(), api.listAllExpenses()]);
+
+  function cashLedger(start, units, expenses, moves) {
+    if (!start) return { start: null, balance: null, entries: [] };
+    const names = new Map(units.map((u) => [u.id, unitName(u)]));
+    const events = [];
+    units.forEach((u) => {
+      const name = unitName(u);
+      const href = '#/units/' + u.id;
+      events.push({ date: u.purchase_date, amount: -u.purchase_price, label: 'Bought ' + name, href, order: 1 });
+      const deposit = u.reserved_by && u.deposit && u.reserved_date ? u.deposit : 0;
+      if (deposit) events.push({ date: u.reserved_date, amount: deposit, label: `Deposit for ${name} · ${u.reserved_by}`, href, order: 3 });
+      if (u.status === 'sold') {
+        events.push({ date: u.sale_date, amount: u.sale_price - deposit, label: `Sold ${name}${deposit ? ' (balance after deposit)' : ''}`, href, order: 4 });
+      }
+    });
+    expenses.forEach((e) => events.push({
+      date: e.date, amount: -e.amount, order: 2,
+      label: `${CATEGORIES[e.category] || e.category} · ${names.get(e.unit_id) || 'unit'}${e.description ? ' · ' + e.description : ''}`,
+      href: e.unit_id ? '#/units/' + e.unit_id : null,
+    }));
+    moves.forEach((m) => events.push({
+      date: m.date, amount: m.type === 'in' ? m.amount : -m.amount, order: 5, id: m.id, created: millis(m.created_at),
+      label: m.note || (m.type === 'in' ? 'Money added' : 'Money taken out'),
+    }));
+    const entries = events
+      .filter((e) => e.date >= start.as_of)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order || (a.created || 0) - (b.created || 0));
+    let balance = round2(start.amount);
+    entries.forEach((e) => { balance = round2(balance + e.amount); e.balance = balance; });
+    return { start, balance, entries };
+  }
+
+  // Money in and out during the current month.
+  function cashThisMonth(cash) {
+    const month = today().slice(0, 7);
+    const list = cash.entries.filter((e) => e.date.startsWith(month));
+    return {
+      in: round2(sum(list.filter((e) => e.amount > 0), 'amount')),
+      out: round2(-sum(list.filter((e) => e.amount < 0), 'amount')),
+    };
+  }
+
   const loadUnits = () => api.listUnits();
 
   // ---------- Router ----------
@@ -340,22 +476,26 @@
     const token = ++routeToken;
     if (!configured || !fb) return renderSetup();
     if (!session) {
-      topbar.hidden = true;
+      showChrome(false);
       return renderLogin();
     }
-    topbar.hidden = false;
+    showChrome(true);
 
     const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
-    const nav = !parts.length ? 'dashboard' : parts[0] === 'reports' ? 'reports' : parts[1] === 'new' ? 'new' : 'units';
+    const nav = !parts.length ? 'dashboard'
+      : ['reports', 'profile', 'cash'].includes(parts[0]) ? parts[0]
+      : parts[1] === 'new' ? 'new' : 'units';
     document.querySelectorAll('[data-nav]').forEach((a) => {
       if (a.dataset.nav === nav) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     });
 
-    if (!view.querySelector('.page')) view.innerHTML = '<p class="loading">Loading…</p>';
+    if (!view.querySelector('.page')) view.innerHTML = skeleton();
     try {
       if (!parts.length) await renderDashboard(token);
       else if (parts[0] === 'reports') await renderReports(token);
+      else if (parts[0] === 'profile') await renderProfile(token);
+      else if (parts[0] === 'cash') await renderCash(token);
       else if (parts[0] !== 'units') location.hash = '#/';
       else if (parts.length === 1) await renderUnits(token);
       else if (parts[1] === 'new') await renderUnitForm(null, token);
@@ -383,11 +523,11 @@
   // ---------- Setup & login ----------
 
   function renderSetup() {
-    topbar.hidden = true;
+    showChrome(false);
+    document.getElementById('guest-login').hidden = true;
     const offline = configured && !fb;
-    view.innerHTML = `<div class="auth page"><div class="auth-card">
-      ${brandMark()}
-      <h1>${offline ? 'Can’t load the app' : 'Finish setting up'}</h1>
+    view.innerHTML = `<div class="auth page">${authHero()}<div class="auth-card">
+      <h2>${offline ? 'Can’t load the app' : 'Finish setting up'}</h2>
       ${offline
         ? '<p>Firebase didn’t load. Check your internet connection and refresh.</p>'
         : `<p>Connect the app to your Firebase project:</p>
@@ -399,26 +539,29 @@
     </div></div>`;
   }
 
-  function brandMark() {
-    return `<div class="auth-brand">
-      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8"/><path d="M8 22V10l8 7 8-7v12"/></svg>
-      <span>Moto Garage</span></div>`;
+  // App icon, name and tagline above the login and setup cards.
+  function authHero() {
+    return `<div class="auth-hero">
+      <img class="auth-icon" src="img/icon-512.png" alt="" width="512" height="512">
+      <h1>${esc(businessName())}</h1>
+      <p class="muted">Track your units, expenses and profit.</p></div>`;
   }
 
   function renderLogin() {
-    view.innerHTML = `<div class="auth page"><div class="auth-card">
-      ${brandMark()}
-      <h1>Log in</h1>
-      <p class="muted">Track your units, expenses and profit.</p>
+    document.getElementById('guest-login').hidden = false;
+    view.innerHTML = `<div class="auth page">${authHero()}<div class="auth-card">
+      <h2>Log in</h2>
       <form id="login-form" novalidate>
+        <p class="form-error" id="login-error" role="alert"></p>
         ${field('email', 'Email', '', { type: 'email', required: true, attrs: 'autocomplete="email"' })}
         ${field('password', 'Password', '', { type: 'password', required: true, attrs: 'autocomplete="current-password"' })}
-        <p class="form-error" id="login-error" role="alert"></p>
-        <button class="btn btn-block" type="submit">Log in</button>
+        <div class="auth-actions">
+          <button class="btn" type="submit">Log in</button>
+          <button class="link-btn forgot" type="button" id="forgot">Forgot password?</button>
+        </div>
       </form>
-      <button class="btn-ghost btn-block forgot" type="button" id="forgot">Forgot password?</button>
-      <p class="muted small">No account yet? Ask the owner to add you.</p>
-    </div></div>`;
+    </div>
+    <p class="auth-foot muted">No account yet? Ask the owner to add you.</p></div>`;
 
     const form = view.querySelector('#login-form');
     view.querySelector('#forgot').addEventListener('click', (e) => {
@@ -477,7 +620,7 @@
           <span class="meta">${plural(u.days_in_stock, 'day')} in stock</span>`;
       }
     }
-    return `<a class="unit-row" href="#/units/${u.id}">
+    return `<a class="unit-row unit-item" href="#/units/${u.id}">
       ${unitThumb(u)}
       <span class="unit-main">
         <strong>${esc(unitName(u))}</strong>
@@ -485,6 +628,71 @@
       </span>
       <span class="unit-figs">${figures}</span>
     </a>`;
+  }
+
+  // Photo-first card for the Units grid.
+  function unitCard(u) {
+    const img = u.card || u.thumb;
+    let price;
+    let sub;
+    if (u.status === 'sold') {
+      price = `<span class="${profitClass(u.profit)}">${signed(u.profit)}</span>`;
+      sub = `Profit · sold ${fmtDate(u.sale_date)}`;
+    } else if (u.status === 'reserved') {
+      price = money(u.agreed_price != null ? u.agreed_price : u.total_cost);
+      sub = `${pesoShort.format(u.deposit || 0)} down · ${esc(u.reserved_by || '')}`;
+    } else {
+      price = money(u.total_cost);
+      sub = `Cost · ${plural(u.days_in_stock, 'day')} in stock`;
+    }
+    return `<a class="unit-card unit-item" href="#/units/${u.id}">
+      <span class="card-media">
+        ${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : ICONS[u.type]}
+        <span class="card-status ${u.status}">${STATUS[u.status]}</span>
+      </span>
+      <span class="card-body">
+        <strong class="card-title">${esc(unitName(u))}</strong>
+        ${u.plate_no ? `<span class="plate">${esc(u.plate_no)}</span>` : ''}
+        <span class="card-price">${price}</span>
+        <span class="meta">${sub}</span>
+      </span>
+    </a>`;
+  }
+
+  // Profit for each of the last `n` months, oldest first.
+  function monthlyProfit(sold, n) {
+    const now = today();
+    let y = Number(now.slice(0, 4));
+    let m = Number(now.slice(5, 7));
+    const keys = [];
+    for (let i = 0; i < n; i++) {
+      keys.unshift(`${y}-${String(m).padStart(2, '0')}`);
+      m--; if (m < 1) { m = 12; y--; }
+    }
+    return keys.map((key) => ({ key, profit: round2(sum(sold.filter((u) => u.sale_date.startsWith(key)), 'profit')) }));
+  }
+
+  // Small trend line of monthly profit for the dashboard hero tile.
+  function sparkline(series) {
+    const W = 300;
+    const H = 64;
+    const pad = 4;
+    const vals = series.map((s) => s.profit);
+    const max = Math.max(0, ...vals);
+    const min = Math.min(0, ...vals);
+    const span = max - min || 1;
+    const x = (i) => pad + (i * (W - pad * 2)) / Math.max(1, series.length - 1);
+    const y = (v) => pad + ((max - v) / span) * (H - pad * 2);
+    const line = 'M' + series.map((s, i) => `${x(i).toFixed(1)},${y(s.profit).toFixed(1)}`).join('L');
+    const area = `${line}L${x(series.length - 1).toFixed(1)},${y(0).toFixed(1)}L${x(0).toFixed(1)},${y(0).toFixed(1)}Z`;
+    const label = 'Profit, last ' + series.length + ' months: ' +
+      series.map((s) => `${MONTHS[Number(s.key.slice(5)) - 1]} ${signed(s.profit)}`).join(', ');
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(label)}">
+        <line class="zero" x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>
+        <path class="area" d="${area}"/>
+        <path class="line" d="${line}"/>
+      </svg>
+      <span class="spark-labels" aria-hidden="true"><span>${MONTHS[Number(series[0].key.slice(5)) - 1]}</span><span>${MONTHS[Number(series[series.length - 1].key.slice(5)) - 1]}</span></span>`;
   }
 
   const statusBadge = (s) => `<span class="badge ${s}">${STATUS[s]}</span>`;
@@ -508,8 +716,9 @@
   // ---------- Dashboard ----------
 
   async function renderDashboard(token) {
-    const units = await loadUnits();
+    const [units, [cashStart, cashMoves, allExpenses]] = await Promise.all([loadUnits(), loadCashParts()]);
     if (stale(token)) return;
+    const cash = cashLedger(cashStart, units, allExpenses, cashMoves);
 
     if (!units.length) {
       view.innerHTML = `<div class="page"><div class="panel empty">
@@ -539,12 +748,29 @@
 
     view.innerHTML = `<div class="page">
       <div class="page-head"><h1>Dashboard</h1></div>
-      <div class="stats">
+      <div class="stats bento">
+        ${cash.start ? (() => {
+          const m = cashThisMonth(cash);
+          return `<a class="stat hero cash-hero" href="#/cash">
+            <span class="stat-label">Money on hand</span>
+            <span class="stat-value ${cash.balance < 0 ? 'neg' : ''}">${money(cash.balance)}</span>
+            <span class="stat-sub">This month: <b class="pos">+${money(m.in)}</b> in · <b class="neg">−${money(m.out)}</b> out</span>
+            <span class="stat-sub">Counting from ${fmtDate(cash.start.as_of)}, starting with ${money(cash.start.amount)}</span>
+          </a>`;
+        })() : `<div class="stat hero cash-hero">
+            <span class="stat-label">Money on hand</span>
+            <p class="cash-setup">Enter how much money the business has now. Buying units and adding expenses will subtract from it, and deposits and sales will add to it.</p>
+            <a class="btn" href="#/cash">Set starting money</a>
+          </div>`}
+        <a class="stat hero" href="#/reports">
+          <span class="stat-label">Profit in ${monthName}</span>
+          <span class="stat-value ${profitClass(monthProfit)}">${signed(monthProfit)}</span>
+          <span class="stat-sub">${plural(soldMonth.length, 'unit')} sold · ${money(sum(soldMonth, 'sale_price'))} in sales</span>
+          ${sparkline(monthlyProfit(sold, 6))}
+        </a>
         ${stat('Units in stock', unsold.length, stockSub)}
         ${stat('Money in stock', money(sum(unsold, 'total_cost')), 'Purchase + expenses of unsold units')}
-        ${stat(`Profit in ${monthName}`, signed(monthProfit), `${plural(soldMonth.length, 'unit')} sold`, profitClass(monthProfit))}
-        ${stat('Total profit', signed(totalProfit), `${plural(sold.length, 'unit')} sold`, profitClass(totalProfit))}
-        ${stat('Total sales', money(sum(sold, 'sale_price')))}
+        ${stat('Total profit', signed(totalProfit), `${plural(sold.length, 'unit')} sold · ${money(sum(sold, 'sale_price'))} in sales`, profitClass(totalProfit))}
         ${stat('Deposits held', money(sum(reserved, 'deposit')), reserved.length ? `${plural(reserved.length, 'reserved unit')}` : 'No reservations')}
       </div>
       ${followUp.length ? `
@@ -552,7 +778,7 @@
           <h2>Papers to follow up</h2>
           <div class="unit-list">${followUp.map((f) => unitRow(f.u, {
             meta: f.meta, warn: true,
-            figures: `<span class="meta">${papersDone(f.u)} of ${PAPERS.length} papers done</span>`,
+            figures: `<span class="meta hide-mobile">${papersDone(f.u)} of ${PAPERS.length} papers done</span>`,
           })).join('')}</div>
         </section>` : ''}
       <div class="columns">
@@ -571,6 +797,13 @@
   // ---------- Units list ----------
 
   const filters = { q: '', type: '', status: '' };
+  const VIEW_KEY = 'moto-units-view';
+  let unitsView = 'grid';
+  try { unitsView = localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid'; } catch (e) { /* storage blocked */ }
+  const VIEW_ICONS = {
+    grid: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/></svg>',
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg>',
+  };
 
   function matches(u) {
     if (filters.type && u.type !== filters.type) return false;
@@ -589,8 +822,11 @@
       <div class="page-head">
         <h1>Units</h1>
         <div class="actions">
+          <div class="view-toggle" role="group" aria-label="View">
+            ${['grid', 'list'].map((v) => `<button type="button" data-view="${v}" aria-pressed="${unitsView === v}" aria-label="${v === 'grid' ? 'Photo grid' : 'List'}">${VIEW_ICONS[v]}</button>`).join('')}
+          </div>
           <button class="btn-secondary" type="button" id="export">Export CSV</button>
-          <a class="btn" href="#/units/new">+ Add unit</a>
+          <a class="btn hide-mobile" href="#/units/new">+ Add unit</a>
         </div>
       </div>
       <div class="filters">
@@ -599,7 +835,7 @@
         <select id="f-status" aria-label="Filter by status">${options({ unsold: 'Not sold yet', ...STATUS }, filters.status, 'All statuses')}</select>
       </div>
       <p class="list-summary" id="list-summary" aria-live="polite"></p>
-      <div class="unit-list panel-list" id="unit-list"></div>
+      <div id="unit-list"></div>
     </div>`;
 
     const list = view.querySelector('#unit-list');
@@ -611,11 +847,20 @@
         ? `${plural(shown.length, 'unit')} · cost ${money(sum(shown, 'total_cost'))}` +
           (soldShown.length ? ` · profit <span class="${profitClass(sum(soldShown, 'profit'))}">${signed(sum(soldShown, 'profit'))}</span>` : '')
         : '';
+      const grid = unitsView === 'grid' && shown.length;
+      list.className = grid ? 'unit-grid' : 'unit-list panel-list';
       list.innerHTML = shown.length
-        ? shown.map((u) => unitRow(u)).join('')
+        ? shown.map((u) => (grid ? unitCard(u) : unitRow(u))).join('')
         : `<p class="muted empty-list">${units.length ? 'No units match these filters.' : 'No units yet. Add your first one.'}</p>`;
     };
     draw();
+
+    view.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+      unitsView = b.dataset.view;
+      try { localStorage.setItem(VIEW_KEY, unitsView); } catch (e) { /* storage blocked */ }
+      view.querySelectorAll('[data-view]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      draw();
+    }));
 
     [['f-q', 'q', 'input'], ['f-type', 'type', 'change'], ['f-status', 'status', 'change']].forEach(([id, key, evt]) => {
       view.querySelector('#' + id).addEventListener(evt, (e) => { filters[key] = e.target.value; draw(); });
@@ -963,6 +1208,11 @@
     if (stale(token)) return;
     // Cover first, then the rest in the order they were added.
     photos.sort((a, b) => (b.id === unit.cover_id) - (a.id === unit.cover_id));
+    // Units whose cover was set before card images existed get one now, in the background.
+    if (unit.cover_id && !unit.card) {
+      const cover = photos.find((p) => p.id === unit.cover_id);
+      if (cover) cardFor(cover).then((card) => api.updateUnit(unit.id, { card })).catch((e) => console.warn('Card image not saved', e));
+    }
 
     box.innerHTML = `
       <div class="gallery-head">
@@ -1122,6 +1372,7 @@
           ${field('purchase_date', 'Date bought', unit.purchase_date, { type: 'date', required: true })}
           ${field('bought_from', 'Bought from', unit.bought_from, { wide: true, attrs: 'placeholder="Seller’s name (optional)"' })}
         </div>
+        ${id ? '' : '<p class="preview cash-preview" id="cash-preview" aria-live="polite" hidden></p>'}
 
         ${showReservation ? `
           <h2>Reservation</h2>
@@ -1160,6 +1411,34 @@
     const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string'));
     const initial = snapshot();
     const isDirty = () => snapshot() !== initial || picked.length > 0;
+
+    // New units: show money on hand before and after this purchase.
+    const cashPreview = form.querySelector('#cash-preview');
+    if (cashPreview) {
+      let cashNow = null;
+      const showCash = () => {
+        if (!cashNow || !cashNow.start) return;
+        const price = Number(form.elements.purchase_price.value) || 0;
+        const date = form.elements.purchase_date.value;
+        cashPreview.hidden = false;
+        if (date && date < cashNow.start.as_of) {
+          cashPreview.className = 'preview cash-preview muted';
+          cashPreview.textContent = `Bought before ${fmtDate(cashNow.start.as_of)}, when you started counting money on hand, so it won’t change it.`;
+          return;
+        }
+        const after = round2(cashNow.balance - price);
+        cashPreview.className = 'preview cash-preview' + (after < 0 ? ' neg' : '');
+        cashPreview.textContent = `Money on hand: ${money(cashNow.balance)} → after buying: ${money(after)}` +
+          (after < 0 ? '. Not enough money on hand.' : '');
+      };
+      Promise.all([loadUnits(), loadCashParts()]).then(([us, [st, mv, ex]]) => {
+        if (stale(token)) return;
+        cashNow = cashLedger(st, us, ex, mv);
+        showCash();
+      }).catch((err) => console.warn('Money on hand not loaded', err));
+      form.elements.purchase_price.addEventListener('input', showCash);
+      form.elements.purchase_date.addEventListener('input', showCash);
+    }
     const status = form.querySelector('#form-status');
     const showDirty = () => { status.textContent = isDirty() ? 'Unsaved changes' : ''; };
     form.addEventListener('input', showDirty);
@@ -1470,6 +1749,215 @@
     view.querySelector('#r-period').addEventListener('change', (e) => { reportState.period = e.target.value; draw(); });
   }
 
+  // ---------- Cash page ----------
+
+  async function renderCash(token) {
+    const [units, [start, moves, expenses]] = await Promise.all([loadUnits(), loadCashParts()]);
+    if (stale(token)) return;
+    const cash = cashLedger(start, units, expenses, moves);
+    const m = start ? cashThisMonth(cash) : null;
+
+    view.innerHTML = `<div class="page narrow">
+      <div class="page-head"><h1>Cash</h1></div>
+      ${start ? `
+        <section class="panel cash-balance">
+          <span class="stat-label">Money on hand</span>
+          <span class="cash-amount ${cash.balance < 0 ? 'neg' : ''}">${money(cash.balance)}</span>
+          <div class="cash-month">
+            <span>This month</span>
+            <span class="pos">+${money(m.in)} in</span>
+            <span class="neg">−${money(m.out)} out</span>
+          </div>
+          <div class="toggle" role="group" aria-label="Add or take out money">
+            <button type="button" class="toggle-btn" data-move="in" aria-pressed="true">Add money</button>
+            <button type="button" class="toggle-btn" data-move="out" aria-pressed="false">Take out money</button>
+          </div>
+          <form id="move-form" novalidate>
+            <input type="hidden" name="type" value="in">
+            <div class="grid-2">
+              ${field('amount', 'Amount (₱)', '', { type: 'number', required: true, attrs: MONEY_ATTRS })}
+              ${field('date', 'Date', today(), { type: 'date', required: true })}
+              ${field('note', 'Note', '', { wide: true, attrs: 'placeholder="e.g. Capital from partner"' })}
+            </div>
+            <button class="btn" type="submit" id="move-submit">Add money</button>
+          </form>
+        </section>` : ''}
+
+      <section class="panel" id="start-panel"${start ? ' hidden' : ''}>
+        <h2>${start ? 'Change starting money' : 'Set your starting money'}</h2>
+        <p class="muted small form-note">Count the money the business has (cash and bank) on the date below. From that date on, buying a unit or adding an expense subtracts from it, and deposits and sales add to it.</p>
+        <form id="start-form" novalidate>
+          <div class="grid-2">
+            ${field('start_amount', 'Starting money (₱)', start ? start.amount : '', { type: 'number', required: true, attrs: MONEY_ATTRS })}
+            ${field('as_of', 'Counting from', start ? start.as_of : today(), { type: 'date', required: true })}
+          </div>
+          <div class="actions">
+            <button class="btn" type="submit">Save starting money</button>
+            ${start ? '<button class="btn-ghost" type="button" id="start-cancel">Cancel</button>' : ''}
+          </div>
+        </form>
+      </section>
+
+      ${start ? `
+        <section class="panel">
+          <h2>History</h2>
+          <ul class="cash-list">
+            ${cash.entries.slice().reverse().map((e) => `<li class="cash-row">
+              <span class="cash-sign ${e.amount < 0 ? 'out' : 'in'}" aria-hidden="true">${e.amount < 0 ? '−' : '+'}</span>
+              <span class="cash-main">
+                ${e.href ? `<a href="${e.href}">${esc(e.label)}</a>` : `<strong>${esc(e.label)}</strong>`}
+                <span class="meta">${fmtDate(e.date)}</span>
+              </span>
+              <span class="cash-figs">
+                <span class="fig ${e.amount < 0 ? 'neg' : 'pos'}">${e.amount < 0 ? '−' : '+'}${money(Math.abs(e.amount))}</span>
+                <span class="meta">${money(e.balance)}</span>
+              </span>
+              ${e.id ? `<button class="icon-btn" type="button" data-delete-move="${e.id}" aria-label="Delete ${esc(e.label)}">×</button>` : '<span></span>'}
+            </li>`).join('')}
+            <li class="cash-row start-row">
+              <span class="cash-sign in" aria-hidden="true">●</span>
+              <span class="cash-main"><strong>Starting money</strong><span class="meta">${fmtDate(start.as_of)}</span></span>
+              <span class="cash-figs"><span class="fig">${money(start.amount)}</span></span>
+              <button class="link-btn" type="button" id="edit-start">Change</button>
+            </li>
+          </ul>
+        </section>` : ''}
+    </div>`;
+
+    const startPanel = view.querySelector('#start-panel');
+    const startForm = view.querySelector('#start-form');
+    startForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!validate(startForm)) return;
+      const v = formValues(startForm);
+      busy(startForm.querySelector('button[type=submit]'), async () => {
+        try {
+          await api.setCashStart({ amount: Number(v.start_amount), as_of: v.as_of });
+          toast('Starting money saved.');
+          await route();
+        } catch (err) { toast(friendlyError(err), 'err'); }
+      });
+    });
+    const editStart = view.querySelector('#edit-start');
+    if (editStart) editStart.addEventListener('click', () => {
+      startPanel.hidden = false;
+      startPanel.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      startForm.elements.start_amount.focus({ preventScroll: true });
+    });
+    const cancelStart = view.querySelector('#start-cancel');
+    if (cancelStart) cancelStart.addEventListener('click', () => { startPanel.hidden = true; });
+
+    const moveForm = view.querySelector('#move-form');
+    if (moveForm) {
+      const submit = moveForm.querySelector('#move-submit');
+      view.querySelectorAll('[data-move]').forEach((b) => b.addEventListener('click', () => {
+        view.querySelectorAll('[data-move]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        moveForm.elements.type.value = b.dataset.move;
+        submit.textContent = b.dataset.move === 'in' ? 'Add money' : 'Take out money';
+        moveForm.elements.note.placeholder = b.dataset.move === 'in' ? 'e.g. Capital from partner' : 'e.g. Rent, allowance, salary';
+      }));
+      moveForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const ok = validate(moveForm, {
+          amount: (v) => (Number(v) <= 0 ? 'Enter an amount above zero.' : ''),
+          date: (v) => (v < start.as_of ? `Can’t be before ${fmtDate(start.as_of)}, when you started counting.` : ''),
+        });
+        if (!ok) return;
+        const v = formValues(moveForm);
+        busy(submit, async () => {
+          try {
+            await api.addCash({ type: v.type, amount: v.amount, date: v.date, note: v.note });
+            toast(v.type === 'in' ? 'Money added.' : 'Money taken out.');
+            await route();
+          } catch (err) { toast(friendlyError(err), 'err'); }
+        });
+      });
+    }
+
+    view.querySelectorAll('[data-delete-move]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('Delete this entry? Money on hand will be recalculated.')) return;
+      try {
+        await api.deleteCash(b.dataset.deleteMove);
+        toast('Entry deleted.');
+        await route();
+      } catch (err) { toast(friendlyError(err), 'err'); }
+    }));
+  }
+
+  // ---------- Profile ----------
+
+  async function renderProfile(token) {
+    await businessLoaded;
+    if (stale(token)) return;
+
+    view.innerHTML = `<div class="page narrow">
+      <div class="page-head"><h1>Profile</h1></div>
+      <form id="profile-form" class="panel form" novalidate>
+        <h2 class="first">Business</h2>
+        <p class="muted small form-note">Shared with everyone on your team. The name appears in the top bar.</p>
+        <div class="grid-2">
+          ${field('business_name', 'Business name', business.name || DEFAULT_NAME, { required: true, wide: true })}
+          ${field('business_phone', 'Contact number', business.phone, { type: 'tel', attrs: 'autocomplete="tel" placeholder="e.g. 0917 123 4567"' })}
+          ${field('business_email', 'Business email', business.email, { type: 'email', attrs: 'autocomplete="email"' })}
+          ${field('business_address', 'Address', business.address, { wide: true, attrs: 'placeholder="e.g. Brgy. San Isidro, Malolos, Bulacan"' })}
+        </div>
+
+        <h2>Your account</h2>
+        <div class="grid-2">
+          ${field('display_name', 'Your name', session.displayName || '', { attrs: 'autocomplete="name"' })}
+          <div class="field"><span class="label-like">Email</span><p class="readonly">${esc(session.email)}</p></div>
+        </div>
+        <div class="account-actions">
+          <button type="button" class="btn-secondary" id="reset-password">Change password</button>
+          <p class="muted small">We’ll email you a link to set a new password.</p>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn" type="submit">Save changes</button>
+          <span class="unsaved" id="form-status" aria-live="polite"></span>
+        </div>
+      </form>
+    </div>`;
+
+    const form = view.querySelector('#profile-form');
+    const status = form.querySelector('#form-status');
+    const snapshot = () => JSON.stringify([...new FormData(form)].filter(([, v]) => typeof v === 'string'));
+    const initial = snapshot();
+    const isDirty = () => snapshot() !== initial;
+    const showDirty = () => { status.textContent = isDirty() ? 'Unsaved changes' : ''; };
+    form.addEventListener('input', showDirty);
+    leaveGuard = () => (isDirty() ? { message: 'You have unsaved changes. Leave without saving?', discard() {} } : null);
+
+    const resetBtn = form.querySelector('#reset-password');
+    resetBtn.addEventListener('click', () => busy(resetBtn, async () => {
+      try {
+        await fb.sendPasswordResetEmail(auth, session.email);
+        toast(`Password reset link sent to ${session.email}. Check your inbox and spam.`);
+      } catch (err) { toast(friendlyError(err), 'err'); }
+    }));
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!validate(form)) return;
+      busy(form.querySelector('button[type=submit]'), async () => {
+        const v = formValues(form);
+        try {
+          const values = { name: v.business_name, phone: v.business_phone, email: v.business_email, address: v.business_address };
+          await api.saveBusiness(values);
+          business = { ...business, ...values };
+          applyBranding();
+          if ((v.display_name || '') !== (session.displayName || '')) {
+            await fb.updateProfile(session, { displayName: v.display_name || null });
+            updateAvatar();
+          }
+          leaveGuard = null;
+          toast('Profile saved.');
+          await route();
+        } catch (err) { toast(friendlyError(err), 'err'); }
+      });
+    });
+  }
+
   // ---------- Start ----------
 
   // A page with unsaved edits sets leaveGuard to return { message, discard } while
@@ -1491,7 +1979,7 @@
     }
     leaveGuard = null;
     currentHash = location.hash;
-    view.innerHTML = '<p class="loading">Loading…</p>';
+    view.innerHTML = skeleton();
     window.scrollTo(0, 0);
     route();
   });
@@ -1505,6 +1993,7 @@
       console.error(err);
       return renderSetup();
     }
+    applyBranding();
     const app = fb.initializeApp(cfg);
     auth = fb.getAuth(app);
     db = fb.getFirestore(app);
@@ -1514,6 +2003,7 @@
     fb.onAuthStateChanged(auth, (user) => {
       const changed = Boolean(user) !== Boolean(session);
       session = user;
+      if (user && (first || changed)) { updateAvatar(); loadBusiness(); }
       if (first || changed) route();
       first = false;
     });
@@ -1521,6 +2011,11 @@
     document.getElementById('logout').addEventListener('click', async () => {
       await fb.signOut(auth);
       location.hash = '#/';
+    });
+    // The header Log in button on the login screen just moves to the email field.
+    document.getElementById('guest-login').addEventListener('click', (e) => {
+      const email = view.querySelector('#login-form [name=email]');
+      if (email) { e.preventDefault(); email.focus(); }
     });
   }
 
