@@ -92,8 +92,8 @@ code { font-size: 0.9em; background: var(--bg); padding: 1px 6px; border-radius:
 .topbar .logout:hover { color: var(--ink); }
 /* Logged out, the top bar shows the brand and a Log in button. */
 .guest .tabs, .guest .avatar-link, .guest .logout { display: none; }
-.guest-login { display: none; }
-.topbar .guest-login { min-height: 40px; padding: 0 20px; border-radius: 999px; }
+/* .topbar outranks .btn, which comes later in the file and would show the button when logged in. */
+.topbar .guest-login { display: none; min-height: 40px; padding: 0 20px; border-radius: 999px; }
 .guest .guest-login:not([hidden]) { display: inline-flex; }
 
 /* Top tabs are for wider screens; phones use the bottom bar. */
