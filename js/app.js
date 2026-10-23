@@ -1995,7 +1995,8 @@
     }
     applyBranding();
     const app = fb.initializeApp(cfg);
-    auth = fb.getAuth(app);
+    // Logins last only for this browser tab: closing it logs out, a refresh doesn't.
+    auth = fb.initializeAuth(app, { persistence: fb.browserSessionPersistence });
     db = fb.getFirestore(app);
 
     // Re-render only on the first auth state and when signing in or out.

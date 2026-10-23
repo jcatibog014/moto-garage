@@ -11,7 +11,7 @@ Moto Garage is a unit tracker for a motorcycle and car buy-and-sell business. It
 
 ## Architecture
 
-- `js/app.js` is one IIFE. `start()` loads the Firebase modular SDK from gstatic with dynamic `import()` at the version pinned in `FIREBASE_SDK`, and merges the modules into `fb`. If the import fails, the setup screen explains it.
+- `js/app.js` is one IIFE. `start()` loads the Firebase modular SDK from gstatic with dynamic `import()` at the version pinned in `FIREBASE_SDK`, and merges the modules into `fb`. If the import fails, the setup screen explains it. Auth uses `initializeAuth` with `browserSessionPersistence`, so closing the tab or browser logs the user out (a refresh doesn't).
 - A hash router (`#/`, `#/units`, `#/units/new`, `#/units/:id`, `#/units/:id/edit`) calls a `render*` function per view, which writes `view.innerHTML` and attaches listeners. Escape all user data with `esc()`.
 - `routeToken` / `stale(token)` drop renders that finish after the user has already navigated away.
 - All Firestore access goes through the `api` object. Data layout: `units/{id}`, `units/{id}/expenses/{id}` and `units/{id}/photos/{id}`. Each unit stores a running `total_expenses` and `photo_count`, updated in the same `writeBatch` with `increment()` as each expense or photo write. Keep that invariant. `deleteUnit` deletes both subcollections first.
